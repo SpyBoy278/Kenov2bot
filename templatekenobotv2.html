@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+    <style>
+        body { font-family: sans-serif; background: #1e1e1e; color: white; text-align: center; margin: 0; padding: 10px; }
+        .grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 5px; margin: 20px 0; }
+        .num { background: #333; padding: 10px 0; border-radius: 5px; cursor: pointer; }
+        .num.selected { background: #4caf50; }
+        .timer { font-size: 24px; margin: 10px 0; }
+        .bet-btn { background: #ff9800; padding: 15px; border-radius: 10px; font-size: 20px; margin-top: 10px; }
+        .draw-grid { display: grid; grid-template-columns: repeat(9, 1fr); gap: 5px; margin: 10px 0; }
+        .draw-num { background: #555; padding: 10px 0; }
+        .draw-num.show { background: #e91e63; }
+    </style>
+</head>
+<body>
+    <div id="game">
+        <h3>FAST KENO 2</h3>
+        <div id="balance">Balance: 0.00 ETB</div>
+        <div class="timer" id="timer">00:60</div>
+        <div class="grid" id="number-grid"></div>
+        <div id="bet-info"></div>
+        <button class="bet-btn" id="place-bet-btn">Place Bet</button>
+    </div>
+    <div id="draw" style="display: none;">
+        <h3>Drawing...</h3>
+        <div class="draw-grid" id="draw-numbers"></div>
+        <h4 id="draw-progress">0/20</h4>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();  // make it fullscreen
+
+        let selected = new Set();
+        let balance = 0;
+        let betAmount = 0;
+        let roundRemaining = 60;
+        let roundActive = true;
+        let socket = io();
+
+        // Get user ID from Telegram
+        const userId = tg.initDataUnsafe?.user?.id || 123456;
+
+        // Fetch initial balance from server (optional: send userId to server)
+        function updateBalanceDisplay() {
+            document.getElementById('balance').innerText = `Balance: ${balance.toFixed(2)} ETB`;
+        }
+
+        socket.on('connect', () => {
+            // Request user balance (simplified — we'll rely on server-side)
+            socket.emit('request_balance', { user_id: userId });
+        });
+
+        socket.on('balance', (data) => {
+            balance = data.balance;
+            updateBalanceDisplay();
+        });
+
+        socket.on('round_state', (data) => {
+            roundRemaining = data.remaining;
+            updateTimerDisplay();
+            if (data.drawn) {
+                showDraw(data.drawn);
+            }
+        });
+
+        socket.on('new_round', (data) => {
+            roundRemaining = data.duration;
+            updateTimerDisplay();
+            selected.clear();
+            renderGrid();
+            document.getElementById('game').style.display = 'block';
+            document.getElementById('draw').style.display = 'none';
+            roundActive = true;
+        });
+
+        socket.on('draw_result', (data) => {
+            roundActive = false;
+            showDraw(data.drawn);
+            // Update balance from winners
+            let win = data.winners[userId] || 0;
+            balance += win;
+            updateBalanceDisplay();
+            alert(`Round ended! You won ${win.toFixed(2)} ETB`);
+        });
+
+        socket.on('bet_success', (data) => {
+            alert(`Ticket placed: ${data.ticket_count}/5`);
+            // Refresh balance (we already deducted, but can request)
+        });
+
+        socket.on('error', (data) => {
+            alert(data.message);
+        });
+
+        // Timer countdown (local)
+        setInterval(() => {
+            if (roundRemaining > 0) {
+                roundRemaining--;
+                updateTimerDisplay();
+            }
+        }, 1000);
+
+        function updateTimerDisplay() {
+            const mins = Math.floor(roundRemaining / 60);
+            const secs = roundRemaining % 60;
+            document.getElementById('timer').innerText = `${mins.toString().padStart(2,'0')}:${secs.toString().padStart(2,'0')}`;
+        }
+
+        // Build number grid 1-80
+        function renderGrid() {
+            const grid = document.getElementById('number-grid');
+            grid.innerHTML = '';
+            for (let i = 1; i <= 80; i++) {
+                const div = document.createElement('div');
+                div.className = 'num' + (selected.has(i) ? ' selected' : '');
+                div.innerText = i;
+                div.onclick = () => toggleNumber(i);
+                grid.appendChild(div);
+            }
+        }
+
+        function toggleNumber(num) {
+            if (!roundActive) return;
+            if (selected.has(num)) {
+                selected.delete(num);
+            } else {
+                if (selected.size >= 10) return alert('Max 10 numbers');
+                selected.add(num);
+            }
+            renderGrid();
+        }
+
+        function showDraw(drawnNumbers) {
+            document.getElementById('game').style.display = 'none';
+            document.getElementById('draw').style.display = 'block';
+            const drawGrid = document.getElementById('draw-numbers');
+            drawGrid.innerHTML = '';
+            drawnNumbers.forEach((n, idx) => {
+                const div = document.createElement('div');
+                div.className = 'draw-num';
+                div.id = `draw-${idx}`;
+                div.innerText = n;
+                drawGrid.appendChild(div);
+            });
+            // Simple animation: reveal one by one
+            for (let i = 0; i < drawnNumbers.length; i++) {
+                setTimeout(() => {
+                    document.getElementById(`draw-${i}`).classList.add('show');
+                    document.getElementById('draw-progress').innerText = `${i+1}/20`;
+                }, i * 200);
+            }
+        }
+
+        document.getElementById('place-bet-btn').addEventListener('click', () => {
+            if (!roundActive) return alert('Round not active');
+            if (selected.size !== 10) return alert('Pick exactly 10 numbers');
+            betAmount = prompt('Enter bet amount (ETB):');
+            if (!betAmount || isNaN(betAmount) || betAmount <= 0) return;
+            betAmount = parseFloat(betAmount);
+            if (betAmount > balance) return alert('Insufficient balance');
+            // Send bet to server
+            socket.emit('place_bet', {
+                user_id: userId,
+                numbers: Array.from(selected),
+                amount: betAmount
+            });
+            // Deduct locally (optimistic)
+            balance -= betAmount;
+            updateBalanceDisplay();
+            selected.clear();
+            renderGrid();
+        });
+
+        renderGrid();
+    </script>
+</body>
+</html>
