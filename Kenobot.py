@@ -1,7 +1,7 @@
 from telegram import Update, WebAppInfo, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-TOKEN = "YOUR_BOT_TOKEN"
+TOKEN = "8695584253:AAF8EYGpcNv_M-xY1mW-kox79O0HDWNuh8E"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Create a button that opens the Mini App
