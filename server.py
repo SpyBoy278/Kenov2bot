@@ -38,6 +38,9 @@ PAYTABLE = {
     10:{0:0,1:0,2:0,3:1,4:2,5:5,6:25,7:100,8:500,9:1000,10:5000}
 }
 
+MIN_BET = 0.2
+MAX_BET = 500
+
 class Round:
     def __init__(self, rid):
         self.id = rid
@@ -109,6 +112,9 @@ def bet(data):
     nums = sorted(map(int, data['numbers']))
     amt = float(data['amount'])
     spots = len(nums)
+    if amt < MIN_BET or amt > min(MAX_BET, get_balance(uid)):
+        emit('error', {'message': f'Bet must be between {MIN_BET} and {min(MAX_BET, get_balance(uid))}'})
+        return
     if spots<1 or spots>10: emit('error',{'message':'Pick 1-10 numbers'}); return
     if amt > get_balance(uid): emit('error',{'message':'Insufficient balance'}); return
     if len(current_round.bets.get(uid,[])) >= 5: emit('error',{'message':'Max 5 tickets'}); return
@@ -199,7 +205,7 @@ HTML = r'''<!DOCTYPE html>
         .num.suggested{border:2px solid #ffaa00;box-shadow:0 0 8px rgba(255,170,0,0.5);}
         .bet-controls{display:flex;align-items:center;justify-content:center;margin:10px 0;gap:8px;}
         .bet-minus,.bet-plus{font-size:22px;color:#fff;cursor:pointer;width:30px;text-align:center;}
-        .bet-amount{font-size:24px;font-weight:bold;color:#fff;min-width:40px;text-align:center;}
+        .bet-amount{font-size:24px;font-weight:bold;color:#fff;min-width:50px;text-align:center;}
         .btn-x2,.btn-max{background:#e55300;color:white;border:none;padding:8px 14px;border-radius:6px;font-weight:bold;font-size:15px;cursor:pointer;}
         .place-bet-btn{background:#e55300;color:white;border:none;padding:14px;border-radius:7px;font-size:18px;font-weight:bold;width:100%;margin:8px 0;cursor:pointer;text-transform:uppercase;letter-spacing:1px;}
         .quick-actions{display:flex;gap:6px;margin:8px 0;flex-wrap:wrap;}
@@ -255,6 +261,11 @@ HTML = r'''<!DOCTYPE html>
         }
         .history-match{background:#4caf50!important;box-shadow:0 0 6px rgba(76,175,80,0.6)!important;}
         .history-pick{background:#ffaa00!important;}
+        .info-box{
+            background:#131c26;border-radius:8px;padding:12px;margin-top:15px;
+            font-size:12px;color:#8899aa;line-height:1.8;
+        }
+        .info-box b{color:#c0c8d0;}
     </style>
 </head>
 <body>
@@ -291,11 +302,11 @@ HTML = r'''<!DOCTYPE html>
             </div>
             <div class="grid" id="numberGrid"></div>
             <div class="bet-controls">
-                <span class="bet-minus" onclick="adjustBet(-1)">-</span>
-                <span class="bet-amount" id="betAmountDisplay">2</span>
-                <span class="bet-plus" onclick="adjustBet(1)">+</span>
+                <span class="bet-minus" onclick="adjustBet(-0.2)">-</span>
+                <span class="bet-amount" id="betAmountDisplay">2.00</span>
+                <span class="bet-plus" onclick="adjustBet(0.2)">+</span>
                 <button class="btn-x2" onclick="setBet(betAmount*2)">X2</button>
-                <button class="btn-max" onclick="setBet(balance)">MAX</button>
+                <button class="btn-max" onclick="setBet(Math.min(balance, 500))">MAX</button>
             </div>
             <button class="place-bet-btn" onclick="placeTicket()">BET</button>
             <div class="ticket-area" id="ticketArea">
@@ -339,6 +350,14 @@ HTML = r'''<!DOCTYPE html>
                 <span>🔥 Hot: <span style="color:#ed4452;" id="hotNumbers"></span></span>
                 <span>❄️ Cold: <span style="color:#0090ff;" id="coldNumbers"></span></span>
             </div>
+            <!-- Game Info Box -->
+            <div class="info-box">
+                <b>Provider:</b> Atlas‑V<br>
+                <b>Release Date:</b> 2023-05-20<br>
+                <b>Type:</b> Other types / Lottery<br>
+                <b>Min Bet:</b> 0.2 ETB &nbsp;&nbsp; <b>Max Bet:</b> 500 ETB<br>
+                <b>Technology:</b> JS, HTML5
+            </div>
         </div>
     </div>
 
@@ -348,18 +367,18 @@ HTML = r'''<!DOCTYPE html>
         const socket = io();
         const userId = tg.initDataUnsafe?.user?.id || 123456;
         let balance = 0, roundRemaining = 60, roundActive = true, roundId = 1;
-        let selected = new Set(), myTickets = [], betAmount = 2;
+        let selected = new Set(), myTickets = [], betAmount = 2.0;
         let currentDrawn = [], currentWin = 0, drawInProgress = false;
         let currentPattern = null, freqData = [];
         const PATTERNS = {
-            top: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40],
-            bottom: [41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80],
+            top: Array.from({length:40},(_,i)=>i+1),
+            bottom: Array.from({length:40},(_,i)=>i+41),
             odd: Array.from({length:40},(_,i)=>i*2+1),
             even: Array.from({length:40},(_,i)=>i*2+2),
-            corners: [1,2,3,9,10,11,19,20,21,29,30,31,39,40,41,49,50,51,59,60,61,69,70,71,79,80],
+            corners: [1,2,9,10,11,20,21,30,31,40,41,50,51,60,61,70,71,80],
             center: [28,29,30,31,32,33,38,39,40,41,42,43,48,49,50,51,52,53],
-            diagonals: [1,9,10,18,19,27,28,36,37,45,46,54,55,63,64,72,73,79,80,8,17,26,35,44,53,62,71],
-            multiples5: [5,10,15,20,25,30,35,40,45,50,55,60,65,70,75,80]
+            diagonals: [1,9,10,18,19,27,28,36,37,45,46,54,55,63,64,72,73,80,8,17,26,35,44,53,62,71],
+            multiples5: Array.from({length:16},(_,i)=>(i+1)*5)
         };
 
         function updateBal(){
@@ -372,8 +391,8 @@ HTML = r'''<!DOCTYPE html>
         });
         socket.on('balance',(d)=>{
             balance=d.balance;updateBal();
-            if(betAmount>balance)betAmount=balance;
-            document.getElementById('betAmountDisplay').innerText=betAmount;
+            if(betAmount>balance)betAmount=Math.min(balance, 500);
+            document.getElementById('betAmountDisplay').innerText=betAmount.toFixed(2);
         });
         socket.on('round_state',(d)=>{
             roundRemaining=d.remaining;roundId=d.round_id;
@@ -432,13 +451,17 @@ HTML = r'''<!DOCTYPE html>
             renderGrid();
         }
 
-        function adjustBet(d){
-            let nb=betAmount+d;if(nb<1)nb=1;if(nb>balance)nb=balance;
-            betAmount=nb;document.getElementById('betAmountDisplay').innerText=betAmount;
+        function adjustBet(delta){
+            let nb = betAmount + delta;
+            if(nb < 0.2) nb = 0.2;
+            if(nb > balance) nb = Math.min(balance, 500);
+            betAmount = nb;
+            document.getElementById('betAmountDisplay').innerText = betAmount.toFixed(2);
         }
         function setBet(v){
-            betAmount=Math.min(v,balance);if(betAmount<1)betAmount=1;
-            document.getElementById('betAmountDisplay').innerText=betAmount;
+            betAmount = Math.min(v, balance, 500);
+            if(betAmount < 0.2) betAmount = 0.2;
+            document.getElementById('betAmountDisplay').innerText = betAmount.toFixed(2);
         }
 
         function quickPick(){
@@ -475,7 +498,7 @@ HTML = r'''<!DOCTYPE html>
             if(!roundActive)return alert('Round not active');
             if(selected.size===0)return alert('Pick at least 1 number');
             if(myTickets.length>=5)return alert('Max 5 tickets');
-            if(betAmount>balance)return alert('Insufficient balance');
+            if(betAmount < 0.2 || betAmount > Math.min(balance, 500)) return alert('Invalid bet amount');
             socket.emit('place_bet',{user_id:userId,numbers:Array.from(selected),amount:betAmount});
         }
 
@@ -552,7 +575,6 @@ HTML = r'''<!DOCTYPE html>
                 html+=nums+counts;
             }
             document.getElementById('statsContainer').innerHTML=html;
-            // Hot & Cold numbers
             const indexed=d.freq.map((f,i)=>({num:i+1,freq:f}));
             indexed.sort((a,b)=>b.freq-a.freq);
             document.getElementById('hotNumbers').innerText=indexed.slice(0,5).map(x=>x.num).join(', ');
