@@ -1,27 +1,37 @@
-import eventlet
-eventlet.monkey_patch()
-
 import random, time, sqlite3, os, string
 from flask import Flask, Response
 from flask_socketio import SocketIO, emit, join_room
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'lite-games-final'
-socketio = SocketIO(app, async_mode='eventlet')
+app.config['SECRET_KEY'] = 'keno-clone'
+socketio = SocketIO(app, async_mode='threading')
 
+# ---------- Database ----------
 conn = sqlite3.connect("keno_app.db", check_same_thread=False)
-conn.execute("""CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, balance REAL DEFAULT 100.0)""")
-conn.execute("""CREATE TABLE IF NOT EXISTS rounds (id INTEGER PRIMARY KEY, drawn_numbers TEXT, timestamp REAL)""")
+conn.execute("""CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY, balance REAL DEFAULT 100.0
+)""")
+conn.execute("""CREATE TABLE IF NOT EXISTS rounds (
+    id INTEGER PRIMARY KEY,
+    drawn_numbers TEXT,
+    timestamp REAL
+)""")
 conn.execute("""CREATE TABLE IF NOT EXISTS tickets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, round_id INTEGER,
-    numbers TEXT, amount REAL, ticket_mask TEXT, win_amount REAL DEFAULT 0
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    round_id INTEGER,
+    numbers TEXT,
+    amount REAL,
+    ticket_mask TEXT,
+    win_amount REAL DEFAULT 0
 )""")
 conn.commit()
 
 PAYTABLE = {
     1:{0:0,1:2},2:{0:0,1:0,2:4},3:{0:0,1:0,2:2,3:12},
     4:{0:0,1:0,2:1,3:5,4:30},5:{0:0,1:0,2:0,3:4,4:15,5:80},
-    6:{0:0,1:0,2:0,3:3,4:10,5:50,6:200},7:{0:0,1:0,2:0,3:2,4:5,5:20,6:100,7:500},
+    6:{0:0,1:0,2:0,3:3,4:10,5:50,6:200},
+    7:{0:0,1:0,2:0,3:2,4:5,5:20,6:100,7:500},
     8:{0:0,1:0,2:0,3:1,4:3,5:10,6:40,7:200,8:1000},
     9:{0:0,1:0,2:0,3:1,4:2,5:8,6:30,7:150,8:600,9:2000},
     10:{0:0,1:0,2:0,3:1,4:2,5:5,6:25,7:100,8:500,9:1000,10:5000}
@@ -59,8 +69,7 @@ def process_draw(round_obj):
             conn.execute("INSERT INTO tickets (user_id,round_id,numbers,amount,ticket_mask,win_amount) VALUES (?,?,?,?,?,?)",
                          (uid, round_obj.id, ','.join(map(str,t['numbers'])), t['amount'], t['mask'], win))
             conn.commit()
-        cur = conn.cursor()
-        cur.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (total_win, uid))
+        conn.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (total_win, uid))
         conn.commit()
         winners[uid] = total_win
     return drawn, winners
@@ -156,78 +165,71 @@ HTML = r'''<!DOCTYPE html>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
 <style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0b0f14; color: #d1d4d8; padding: 12px 8px; min-height: 100vh; user-select: none; -webkit-tap-highlight-color: transparent; }
-.top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
-.balance { background: #152028; padding: 6px 14px; border-radius: 20px; font-weight: 600; font-size: 14px; color: #fff; }
-.deposit-btn { background: #2e7d32; color: white; border: none; padding: 6px 14px; border-radius: 20px; font-size: 14px; font-weight: 600; cursor: pointer; }
-.round-id { font-size: 12px; color: #8899aa; margin-bottom: 2px; text-align: left; }
-.timer { font-size: 32px; font-weight: 700; color: #ffaa00; margin: 2px 0 6px; text-align: center; }
-.circles { display: flex; justify-content: space-between; margin: 0 0 6px; }
-.circle { width: 32px; height: 32px; border-radius: 50%; background: #1c2636; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 15px; color: #aaa; border: 2px solid #3a4a5a; }
-.picker-info { font-size: 12px; color: #8899aa; margin: 0 0 2px; text-align: center; }
-.grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; margin: 6px 0; }
-.num { background: #1c2636; border-radius: 4px; padding: 9px 0; font-size: 13px; font-weight: 500; text-align: center; cursor: pointer; color: #c0c8d0; transition: background 0.1s; }
-.num.selected { background: #4caf50; color: white; font-weight: bold; }
-.bet-controls { display: flex; align-items: center; justify-content: center; margin: 12px 0; gap: 6px; }
-.bet-amount { font-size: 20px; font-weight: bold; min-width: 35px; text-align: center; color: white; }
-.btn-sm { background: #2a3a4a; border: none; color: white; font-size: 20px; width: 32px; height: 32px; border-radius: 5px; cursor: pointer; line-height: 32px; text-align: center; }
-.btn-x2, .btn-max { background: #e55300; color: white; border: none; padding: 8px 12px; border-radius: 5px; font-weight: bold; font-size: 14px; cursor: pointer; }
-.place-bet-btn { background: #e55300; color: white; border: none; padding: 14px; border-radius: 7px; font-size: 18px; font-weight: bold; width: 100%; margin: 8px 0; cursor: pointer; text-transform: uppercase; letter-spacing: 1px; }
-.ticket-area { margin: 6px 0; display: none; }
-.ticket-label { font-size: 12px; color: #8899aa; margin-bottom: 4px; text-align: left; }
-.ticket-list { background: #131c26; border-radius: 6px; padding: 6px 8px; }
-.ticket-item { display: flex; justify-content: space-between; font-size: 12px; padding: 4px 0; border-bottom: 1px solid #233045; }
-.ticket-item:last-child { border-bottom: none; }
-.ticket-id { font-family: monospace; color: #ccc; width: 55px; }
-.ticket-nums { font-family: monospace; color: #aaa; flex: 1; padding-left: 6px; }
-.ticket-amount { min-width: 60px; text-align: right; }
-.ticket-status { color: #d4a017; font-weight: 500; min-width: 55px; text-align: right; }
-.tabs { display: flex; justify-content: space-around; background: #152028; padding: 10px 0; border-radius: 8px; margin-top: 10px; font-size: 13px; color: #667788; font-weight: 600; }
-.tab { cursor: pointer; padding: 0 3px; }
-.tab.active { color: #4caf50; }
-#drawArea { display: none; }
-.draw-id { font-size: 12px; color: #8899aa; margin-bottom: 12px; }
-.draw-grid { margin: 16px 0; }
-.draw-row { display: flex; justify-content: center; gap: 5px; margin-bottom: 5px; }
-.draw-num { background: #1c2636; width: 30px; height: 34px; display: flex; align-items: center; justify-content: center; border-radius: 4px; font-size: 16px; font-weight: 600; color: transparent; transition: all 0.2s; }
-.draw-num.show { background: #ed4452; color: white; }
-.draw-extra-row { justify-content: center; gap: 14px; }
-.draw-progress { font-size: 18px; margin: 10px 0; color: #ffaa00; text-align: center; }
-.draw-result-btn { background: #2e7d32; color: white; border: none; padding: 12px; border-radius: 7px; font-size: 16px; font-weight: bold; width: 100%; cursor: pointer; margin-top: 16px; display: none; }
-.back-btn { background: #2e7d32; color: white; border: none; padding: 12px; border-radius: 7px; font-size: 16px; font-weight: bold; width: 100%; cursor: pointer; margin-top: 12px; display: none; }
-.fairness-footer { text-align: center; margin-top: 16px; padding-top: 12px; border-top: 1px solid #2a3a4a; font-size: 11px; color: #667788; }
-.tab-content { display: none; }
-.tab-content.active { display: block; }
-.leader-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-.leader-table th, .leader-table td { padding: 6px 3px; font-size: 13px; border-bottom: 1px solid #233045; text-align: left; color: #d1d4d8; }
-.leader-table th { color: #8899aa; font-weight: 500; }
-.stats-table { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; margin: 8px 0; }
-.stats-cell { background: #1c2636; border-radius: 3px; padding: 6px 0; text-align: center; font-size: 12px; color: #c0c8d0; }
-.stats-cell .freq { font-size: 16px; font-weight: bold; color: #ffffff; }
-.history-item { background: #131c26; border-radius: 6px; padding: 8px; margin-bottom: 6px; font-size: 13px; }
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0b0f14;color:#d1d4d8;padding:12px 8px;min-height:100vh;user-select:none;-webkit-tap-highlight-color:transparent;}
+.top-bar{display:flex;justify-content:flex-end;margin-bottom:4px;}
+.balance{font-size:14px;color:#fff;}
+.timer{font-size:32px;font-weight:700;color:#ffaa00;text-align:center;margin:4px 0;}
+.round-label{font-size:12px;color:#8899aa;text-align:center;margin:2px 0;}
+.round-id-text{font-size:13px;color:#8899aa;text-align:center;}
+.grid{display:grid;grid-template-columns:repeat(10,1fr);gap:3px;margin:8px 0;}
+.num{background:#1c2636;border-radius:4px;padding:9px 0;font-size:13px;font-weight:500;text-align:center;cursor:pointer;color:#c0c8d0;transition:background 0.1s;}
+.num.selected{background:#4caf50;color:white;font-weight:bold;}
+.bet-controls{display:flex;align-items:center;justify-content:center;margin:10px 0;gap:8px;}
+.bet-minus,.bet-plus{font-size:22px;color:#fff;cursor:pointer;width:30px;text-align:center;}
+.bet-amount{font-size:24px;font-weight:bold;color:#fff;min-width:40px;text-align:center;}
+.btn-x2,.btn-max{background:#e55300;color:white;border:none;padding:8px 14px;border-radius:6px;font-weight:bold;font-size:15px;cursor:pointer;}
+.place-bet-btn{background:#e55300;color:white;border:none;padding:14px;border-radius:7px;font-size:18px;font-weight:bold;width:100%;margin:8px 0;cursor:pointer;text-transform:uppercase;letter-spacing:1px;}
+.ticket-area{margin:6px 0;display:none;}
+.ticket-label{font-size:12px;color:#8899aa;margin-bottom:4px;text-align:left;}
+.ticket-list{background:#131c26;border-radius:6px;padding:6px 8px;}
+.ticket-item{display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-bottom:1px solid #233045;}
+.ticket-item:last-child{border-bottom:none;}
+.ticket-id{font-family:monospace;color:#ccc;width:55px;}
+.ticket-nums{font-family:monospace;color:#aaa;flex:1;padding-left:6px;}
+.ticket-amount{min-width:60px;text-align:right;}
+.ticket-status{color:#d4a017;font-weight:500;min-width:55px;text-align:right;}
+.tabs{display:flex;justify-content:space-around;background:#152028;padding:10px 0;border-radius:8px;margin-top:10px;font-size:13px;color:#667788;font-weight:600;}
+.tab{cursor:pointer;padding:0 3px;}
+.tab.active{color:#4caf50;}
+#drawArea{display:none;}
+.draw-id{font-size:12px;color:#8899aa;margin-bottom:12px;text-align:center;}
+.draw-grid{margin:16px 0;}
+.draw-row{display:flex;justify-content:center;gap:5px;margin-bottom:5px;}
+.draw-num{background:#1c2636;width:30px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:4px;font-size:16px;font-weight:600;color:transparent;transition:all 0.2s;}
+.draw-num.show{background:#ed4452;color:white;}
+.draw-extra-row{justify-content:center;gap:14px;}
+.draw-progress{font-size:18px;margin:10px 0;color:#ffaa00;text-align:center;}
+.draw-result-btn{background:#2e7d32;color:white;border:none;padding:12px;border-radius:7px;font-size:16px;font-weight:bold;width:100%;cursor:pointer;margin-top:16px;display:none;}
+.back-btn{background:#2e7d32;color:white;border:none;padding:12px;border-radius:7px;font-size:16px;font-weight:bold;width:100%;cursor:pointer;margin-top:12px;display:none;}
+.fairness-footer{text-align:center;margin-top:16px;padding-top:12px;border-top:1px solid #2a3a4a;font-size:11px;color:#667788;}
+.tab-content{display:none;}
+.tab-content.active{display:block;}
+.leader-table{width:100%;border-collapse:collapse;margin-top:8px;}
+.leader-table th,.leader-table td{padding:6px 3px;font-size:13px;border-bottom:1px solid #233045;text-align:left;color:#d1d4d8;}
+.leader-table th{color:#8899aa;font-weight:500;}
+.stats-table{display:grid;grid-template-columns:repeat(10,1fr);gap:3px;margin:8px 0;}
+.stats-cell{background:#1c2636;border-radius:3px;padding:6px 0;text-align:center;font-size:12px;color:#c0c8d0;}
+.stats-cell .freq{font-size:16px;font-weight:bold;color:#ffffff;}
+.history-item{background:#131c26;border-radius:6px;padding:8px;margin-bottom:6px;font-size:13px;}
+#depositBtn{display:none;}
 </style>
 </head>
 <body>
 <div id="gameScreen">
   <div class="top-bar">
     <span class="balance" id="balanceDisplay">0.00 ETB</span>
-    <button class="deposit-btn" onclick="deposit()">Deposit</button>
   </div>
-  <div class="round-id" id="roundId">ID: 1</div>
   <div class="timer" id="timerDisplay">00:60</div>
-  <div class="circles" id="circlesArea">
-    <span class="circle">80</span>
-    <span class="circle">70</span>
-  </div>
+  <div class="round-label">From 1 to 80</div>
+  <div class="round-id-text" id="roundIdDisplay">ID: 1</div>
 
   <div id="pickerArea">
-    <div class="picker-info">Choose 10 numbers · From 1 to 80</div>
     <div class="grid" id="numberGrid"></div>
     <div class="bet-controls">
-      <button class="btn-sm" onclick="adjustBet(-1)">-</button>
+      <span class="bet-minus" onclick="adjustBet(-1)">-</span>
       <span class="bet-amount" id="betAmountDisplay">2</span>
-      <button class="btn-sm" onclick="adjustBet(1)">+</button>
+      <span class="bet-plus" onclick="adjustBet(1)">+</span>
       <button class="btn-x2" onclick="setBet(betAmount*2)">X2</button>
       <button class="btn-max" onclick="setBet(balance)">MAX</button>
     </div>
@@ -293,8 +295,8 @@ socket.on('balance', (d) => {
 });
 socket.on('round_state', (d) => {
   roundRemaining = d.remaining; roundId = d.round_id;
-  document.getElementById('roundId').innerText = `ID: ${roundId}`;
-  updateTimer();
+  document.getElementById('timerDisplay').innerText = _formatTime(roundRemaining);
+  document.getElementById('roundIdDisplay').innerText = `ID: ${roundId}`;
   if (d.drawn) { showDraw(d.drawn, d.winners || {}); }
   else { hideDraw(); roundActive = true; renderGrid(); }
 });
@@ -302,11 +304,15 @@ socket.on('new_round', (d) => {
   roundId = d.round_id; roundRemaining = d.duration; roundActive = true;
   selected.clear(); myTickets = []; updateTickets();
   hideDraw(); renderGrid();
-  document.getElementById('roundId').innerText = `ID: ${roundId}`;
-  updateTimer(); drawInProgress = false;
+  document.getElementById('timerDisplay').innerText = _formatTime(roundRemaining);
+  document.getElementById('roundIdDisplay').innerText = `ID: ${roundId}`;
+  drawInProgress = false;
   switchTab('game');
 });
-socket.on('draw_result', (d) => { roundActive = false; showDraw(d.drawn, d.winners); });
+socket.on('draw_result', (d) => {
+  roundActive = false;
+  showDraw(d.drawn, d.winners);
+});
 socket.on('bet_success', (d) => {
   myTickets = d.tickets; balance = d.balance; updateBal();
   selected.clear(); renderGrid(); updateTickets();
@@ -315,12 +321,16 @@ socket.on('your_tickets', (d) => { myTickets = d.tickets; updateTickets(); });
 socket.on('error', (d) => alert(d.message));
 
 setInterval(() => {
-  if (roundRemaining > 0) { roundRemaining--; updateTimer(); if (roundRemaining <= 0) roundActive = false; }
+  if (roundRemaining > 0) {
+    roundRemaining--;
+    document.getElementById('timerDisplay').innerText = _formatTime(roundRemaining);
+    if (roundRemaining <= 0) roundActive = false;
+  }
 }, 1000);
 
-function updateTimer() {
-  const m = Math.floor(roundRemaining/60), s = roundRemaining%60;
-  document.getElementById('timerDisplay').innerText = `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+function _formatTime(sec) {
+  const m = Math.floor(sec/60), s = sec%60;
+  return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
 }
 
 function renderGrid() {
@@ -340,8 +350,8 @@ function toggleNum(n) {
   renderGrid();
 }
 
-function adjustBet(d) {
-  let nb = betAmount + d; if (nb < 1) nb = 1; if (nb > balance) nb = balance;
+function adjustBet(delta) {
+  let nb = betAmount + delta; if (nb < 1) nb = 1; if (nb > balance) nb = balance;
   betAmount = nb; document.getElementById('betAmountDisplay').innerText = betAmount;
 }
 function setBet(v) {
@@ -399,9 +409,9 @@ function hideBoth() {
 }
 
 socket.on('history_data', (d) => {
-  let h = d.history.length === 0 ? '<p style="color:#8899aa;">No history yet.</p>' :
+  document.getElementById('historyContent').innerHTML = d.history.length === 0 ?
+    '<p style="color:#8899aa;">No history yet.</p>' :
     d.history.map(h => `<div class="history-item"><b>Round ${h.round_id}</b> - ${h.mask}<br>Numbers: ${h.numbers.join(' ')} | Bet: ${h.amount.toFixed(2)} ETB<br>Win: ${h.win.toFixed(2)} ETB</div>`).join('');
-  document.getElementById('historyContent').innerHTML = h;
 });
 socket.on('leaderboard_data', (d) => {
   document.getElementById('leaderboardBody').innerHTML = d.leaders.length === 0 ?
@@ -429,8 +439,8 @@ function showDraw(drawn, winners) {
   document.getElementById('drawRoundId').innerText = `ID: ${roundId}`;
   const c = document.getElementById('drawGridContainer'); c.innerHTML = '';
   for (let row=0; row<3; row++) {
-    const rd = document.createElement('div'); rd.className = 'draw-row' + (row===2 ? ' draw-extra-row' : '');
-    const start = row*9, end = row===2 ? 20 : start+9;
+    const rd = document.createElement('div'); rd.className = 'draw-row' + (row===2?' draw-extra-row':'');
+    const start = row*9, end = row===2?20:start+9;
     for (let i=start; i<end; i++) {
       const n = document.createElement('div'); n.className = 'draw-num'; n.id = 'dn'+i; rd.appendChild(n);
     }
@@ -473,13 +483,15 @@ function backToGame() {
   switchTab('game');
 }
 
+// Deposit can be triggered via an external button if desired, but not shown in game screen per screenshot.
 function deposit() {
   const amt = parseFloat(prompt('Deposit amount (ETB):'));
   if (amt && amt>0) socket.emit('deposit', {user_id: userId, amount: amt});
 }
 
 renderGrid();
-document.getElementById('roundId').innerText = `ID: ${roundId}`;
+document.getElementById('timerDisplay').innerText = _formatTime(roundRemaining);
+document.getElementById('roundIdDisplay').innerText = `ID: ${roundId}`;
 document.getElementById('pickerArea').style.display = 'block';
 document.getElementById('drawArea').style.display = 'none';
 </script>
@@ -491,6 +503,5 @@ def index():
     return Response(HTML, mimetype='text/html')
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
     socketio.start_background_task(round_loop)
-    socketio.run(app, host='0.0.0.0', port=port)
+    socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
