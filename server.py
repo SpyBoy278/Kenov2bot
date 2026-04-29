@@ -1,9 +1,9 @@
-import random, time, sqlite3, os, string
+import random, time, sqlite3, os, string, json
 from flask import Flask, Response
 from flask_socketio import SocketIO, emit, join_room
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'keno-clone'
+app.config['SECRET_KEY'] = 'atlas-v-keno-final'
 socketio = SocketIO(app, async_mode='threading')
 
 # ---------- Database ----------
@@ -27,6 +27,7 @@ conn.execute("""CREATE TABLE IF NOT EXISTS tickets (
 )""")
 conn.commit()
 
+# Payouts (1–10 spots)
 PAYTABLE = {
     1:{0:0,1:2},2:{0:0,1:0,2:4},3:{0:0,1:0,2:2,3:12},
     4:{0:0,1:0,2:1,3:5,4:30},5:{0:0,1:0,2:0,3:4,4:15,5:80},
@@ -74,6 +75,7 @@ def process_draw(round_obj):
         winners[uid] = total_win
     return drawn, winners
 
+# ---------- Socket.IO ----------
 @socketio.on('connect')
 def on_connect():
     join_room('round')
@@ -157,344 +159,469 @@ def round_loop():
         current_round = Round(current_round.id+1)
         socketio.emit('new_round', {'round_id':current_round.id, 'duration':current_round.timer}, room='round')
 
+# ---------- Atlas-V Exact HTML ----------
 HTML = r'''<!DOCTYPE html>
 <html>
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
-<script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
-<style>
-*{box-sizing:border-box;margin:0;padding:0;}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0b0f14;color:#d1d4d8;padding:12px 8px;min-height:100vh;user-select:none;-webkit-tap-highlight-color:transparent;}
-.top-bar{display:flex;justify-content:flex-end;margin-bottom:4px;}
-.balance{font-size:14px;color:#fff;}
-.timer{font-size:32px;font-weight:700;color:#ffaa00;text-align:center;margin:4px 0;}
-.round-label{font-size:12px;color:#8899aa;text-align:center;margin:2px 0;}
-.round-id-text{font-size:13px;color:#8899aa;text-align:center;}
-.grid{display:grid;grid-template-columns:repeat(10,1fr);gap:3px;margin:8px 0;}
-.num{background:#1c2636;border-radius:4px;padding:9px 0;font-size:13px;font-weight:500;text-align:center;cursor:pointer;color:#c0c8d0;transition:background 0.1s;}
-.num.selected{background:#4caf50;color:white;font-weight:bold;}
-.bet-controls{display:flex;align-items:center;justify-content:center;margin:10px 0;gap:8px;}
-.bet-minus,.bet-plus{font-size:22px;color:#fff;cursor:pointer;width:30px;text-align:center;}
-.bet-amount{font-size:24px;font-weight:bold;color:#fff;min-width:40px;text-align:center;}
-.btn-x2,.btn-max{background:#e55300;color:white;border:none;padding:8px 14px;border-radius:6px;font-weight:bold;font-size:15px;cursor:pointer;}
-.place-bet-btn{background:#e55300;color:white;border:none;padding:14px;border-radius:7px;font-size:18px;font-weight:bold;width:100%;margin:8px 0;cursor:pointer;text-transform:uppercase;letter-spacing:1px;}
-.ticket-area{margin:6px 0;display:none;}
-.ticket-label{font-size:12px;color:#8899aa;margin-bottom:4px;text-align:left;}
-.ticket-list{background:#131c26;border-radius:6px;padding:6px 8px;}
-.ticket-item{display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-bottom:1px solid #233045;}
-.ticket-item:last-child{border-bottom:none;}
-.ticket-id{font-family:monospace;color:#ccc;width:55px;}
-.ticket-nums{font-family:monospace;color:#aaa;flex:1;padding-left:6px;}
-.ticket-amount{min-width:60px;text-align:right;}
-.ticket-status{color:#d4a017;font-weight:500;min-width:55px;text-align:right;}
-.tabs{display:flex;justify-content:space-around;background:#152028;padding:10px 0;border-radius:8px;margin-top:10px;font-size:13px;color:#667788;font-weight:600;}
-.tab{cursor:pointer;padding:0 3px;}
-.tab.active{color:#4caf50;}
-#drawArea{display:none;}
-.draw-id{font-size:12px;color:#8899aa;margin-bottom:12px;text-align:center;}
-.draw-grid{margin:16px 0;}
-.draw-row{display:flex;justify-content:center;gap:5px;margin-bottom:5px;}
-.draw-num{background:#1c2636;width:30px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:4px;font-size:16px;font-weight:600;color:transparent;transition:all 0.2s;}
-.draw-num.show{background:#ed4452;color:white;}
-.draw-extra-row{justify-content:center;gap:14px;}
-.draw-progress{font-size:18px;margin:10px 0;color:#ffaa00;text-align:center;}
-.draw-result-btn{background:#2e7d32;color:white;border:none;padding:12px;border-radius:7px;font-size:16px;font-weight:bold;width:100%;cursor:pointer;margin-top:16px;display:none;}
-.back-btn{background:#2e7d32;color:white;border:none;padding:12px;border-radius:7px;font-size:16px;font-weight:bold;width:100%;cursor:pointer;margin-top:12px;display:none;}
-.fairness-footer{text-align:center;margin-top:16px;padding-top:12px;border-top:1px solid #2a3a4a;font-size:11px;color:#667788;}
-.tab-content{display:none;}
-.tab-content.active{display:block;}
-.leader-table{width:100%;border-collapse:collapse;margin-top:8px;}
-.leader-table th,.leader-table td{padding:6px 3px;font-size:13px;border-bottom:1px solid #233045;text-align:left;color:#d1d4d8;}
-.leader-table th{color:#8899aa;font-weight:500;}
-.stats-table{display:grid;grid-template-columns:repeat(10,1fr);gap:3px;margin:8px 0;}
-.stats-cell{background:#1c2636;border-radius:3px;padding:6px 0;text-align:center;font-size:12px;color:#c0c8d0;}
-.stats-cell .freq{font-size:16px;font-weight:bold;color:#ffffff;}
-.history-item{background:#131c26;border-radius:6px;padding:8px;margin-bottom:6px;font-size:13px;}
-#depositBtn{display:none;}
-</style>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+    <style>
+        *{box-sizing:border-box;margin:0;padding:0;}
+        body{
+            font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+            background:#0d0f14;color:#d1d4d8;padding:12px 8px;min-height:100vh;
+            user-select:none;-webkit-tap-highlight-color:transparent;
+        }
+        .top-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+        .balance{background:#152028;padding:6px 14px;border-radius:20px;font-weight:600;font-size:14px;color:#fff;}
+        .deposit-btn{background:#2e7d32;color:white;border:none;padding:6px 14px;border-radius:20px;font-size:14px;font-weight:600;cursor:pointer;}
+        .round-id{font-size:12px;color:#8899aa;margin-bottom:2px;text-align:left;}
+        .timer{font-size:32px;font-weight:700;color:#ffaa00;margin:2px 0 6px;text-align:center;}
+        .status-bar{font-size:13px;color:#0090ff;text-align:center;margin:4px 0;font-weight:600;}
+        .circles{display:flex;justify-content:space-between;margin:0 0 8px;}
+        .circle{width:32px;height:32px;border-radius:50%;background:#1c2636;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:15px;color:#aaa;border:2px solid #3a4a5a;}
+        .picker-info{font-size:12px;color:#8899aa;margin:0 0 2px;text-align:center;}
+        .grid{display:grid;grid-template-columns:repeat(10,1fr);gap:3px;margin:6px 0;}
+        .num{
+            background:#1c2636;border-radius:4px;padding:9px 0;font-size:13px;
+            font-weight:500;text-align:center;cursor:pointer;color:#c0c8d0;
+            transition:background 0.15s, box-shadow 0.15s;position:relative;
+        }
+        .num.selected{background:#4caf50;color:white;font-weight:bold;box-shadow:0 0 8px rgba(76,175,80,0.5);}
+        .num.drawn{color:white;font-weight:bold;
+            background:radial-gradient(circle at 30% 30%, #4fc3f7, #0090ff, #00bcd4, #3f51b5, #7c4dff);
+            box-shadow:0 0 10px rgba(0,144,255,0.6);
+        }
+        .num.match{background:#4caf50!important;box-shadow:0 0 12px rgba(76,175,80,0.8)!important;}
+        .num.pattern-overlay{border:2px solid #0090ff;box-shadow:inset 0 0 6px rgba(0,144,255,0.4);}
+        .num.suggested{border:2px solid #ffaa00;box-shadow:0 0 8px rgba(255,170,0,0.5);}
+        .bet-controls{display:flex;align-items:center;justify-content:center;margin:10px 0;gap:8px;}
+        .bet-minus,.bet-plus{font-size:22px;color:#fff;cursor:pointer;width:30px;text-align:center;}
+        .bet-amount{font-size:24px;font-weight:bold;color:#fff;min-width:40px;text-align:center;}
+        .btn-x2,.btn-max{background:#e55300;color:white;border:none;padding:8px 14px;border-radius:6px;font-weight:bold;font-size:15px;cursor:pointer;}
+        .place-bet-btn{background:#e55300;color:white;border:none;padding:14px;border-radius:7px;font-size:18px;font-weight:bold;width:100%;margin:8px 0;cursor:pointer;text-transform:uppercase;letter-spacing:1px;}
+        .quick-actions{display:flex;gap:6px;margin:8px 0;flex-wrap:wrap;}
+        .quick-btn{background:#1a2636;color:#0090ff;border:1px solid #2a3a4a;padding:8px 12px;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600;}
+        .quick-btn:hover{background:#243044;}
+        .pattern-select{background:#1a2636;color:#c0c8d0;border:1px solid #2a3a4a;padding:8px 12px;border-radius:6px;font-size:12px;cursor:pointer;}
+        .ticket-area{margin:6px 0;display:none;}
+        .ticket-label{font-size:12px;color:#8899aa;margin-bottom:4px;text-align:left;}
+        .ticket-list{background:#131c26;border-radius:6px;padding:6px 8px;}
+        .ticket-item{display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-bottom:1px solid #233045;}
+        .ticket-item:last-child{border-bottom:none;}
+        .ticket-id{font-family:monospace;color:#ccc;width:55px;}
+        .ticket-nums{font-family:monospace;color:#aaa;flex:1;padding-left:6px;}
+        .ticket-amount{min-width:60px;text-align:right;}
+        .ticket-status{color:#d4a017;font-weight:500;min-width:55px;text-align:right;}
+        .tabs{display:flex;justify-content:space-around;background:#152028;padding:10px 0;border-radius:8px;margin-top:10px;font-size:13px;color:#667788;font-weight:600;}
+        .tab{cursor:pointer;padding:0 3px;}
+        .tab.active{color:#4caf50;}
+        #drawArea{display:none;}
+        .draw-id{font-size:12px;color:#8899aa;margin-bottom:12px;text-align:center;}
+        .draw-grid{margin:16px 0;}
+        .draw-row{display:flex;justify-content:center;gap:5px;margin-bottom:5px;}
+        .draw-num{
+            width:30px;height:34px;display:flex;align-items:center;justify-content:center;
+            border-radius:4px;font-size:16px;font-weight:600;color:transparent;
+            transition:all 0.25s;
+            background:radial-gradient(circle at 30% 30%, #4fc3f7, #0090ff, #00bcd4, #3f51b5, #7c4dff);
+        }
+        .draw-num.show{background:#ed4452!important;color:white;box-shadow:0 0 12px rgba(237,68,82,0.7);}
+        .draw-extra-row{justify-content:center;gap:14px;}
+        .draw-progress{font-size:18px;margin:10px 0;color:#ffaa00;text-align:center;}
+        .draw-result-btn{background:#2e7d32;color:white;border:none;padding:12px;border-radius:7px;font-size:16px;font-weight:bold;width:100%;cursor:pointer;margin-top:16px;display:none;}
+        .back-btn{background:#2e7d32;color:white;border:none;padding:12px;border-radius:7px;font-size:16px;font-weight:bold;width:100%;cursor:pointer;margin-top:12px;display:none;}
+        .fairness-footer{text-align:center;margin-top:16px;padding-top:12px;border-top:1px solid #2a3a4a;font-size:11px;color:#667788;}
+        .footer-logo{color:#0090ff;font-weight:700;font-size:14px;margin-top:4px;}
+        .tab-content{display:none;}
+        .tab-content.active{display:block;}
+        .leader-table{width:100%;border-collapse:collapse;margin-top:8px;}
+        .leader-table th,.leader-table td{padding:6px 3px;font-size:13px;border-bottom:1px solid #233045;text-align:left;color:#d1d4d8;}
+        .leader-table th{color:#8899aa;font-weight:500;}
+        .stats-grid{display:grid;grid-template-columns:repeat(10,1fr);gap:3px;margin:8px 0;}
+        .stats-cell{background:#1c2636;border-radius:3px;padding:6px 0;text-align:center;font-size:12px;color:#c0c8d0;}
+        .stats-cell .freq{font-size:16px;font-weight:bold;color:#ffffff;}
+        .stats-hot{color:#ed4452!important;}
+        .stats-cold{color:#0090ff!important;}
+        .heatmap-bar{height:4px;border-radius:2px;margin-top:2px;background:#0090ff;}
+        .history-item{background:#131c26;border-radius:6px;padding:8px;margin-bottom:6px;font-size:13px;}
+        .history-drawn{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px;}
+        .history-ball{
+            width:24px;height:24px;border-radius:50%;display:flex;align-items:center;
+            justify-content:center;font-size:10px;font-weight:bold;color:white;
+            background:radial-gradient(circle at 30% 30%, #4fc3f7, #0090ff, #00bcd4, #3f51b5, #7c4dff);
+        }
+        .history-match{background:#4caf50!important;box-shadow:0 0 6px rgba(76,175,80,0.6)!important;}
+        .history-pick{background:#ffaa00!important;}
+    </style>
 </head>
 <body>
-<div id="gameScreen">
-  <div class="top-bar">
-    <span class="balance" id="balanceDisplay">0.00 ETB</span>
-  </div>
-  <div class="timer" id="timerDisplay">00:60</div>
-  <div class="round-label">From 1 to 80</div>
-  <div class="round-id-text" id="roundIdDisplay">ID: 1</div>
+    <div id="gameScreen">
+        <div class="top-bar">
+            <span class="balance" id="balanceDisplay">0.00 ETB</span>
+            <button class="deposit-btn" onclick="deposit()">Deposit</button>
+        </div>
+        <div class="round-id" id="roundId">ID: 1</div>
+        <div class="timer" id="timerDisplay">00:60</div>
+        <div class="status-bar" id="statusBar">Pick up to 10 numbers</div>
+        <div class="circles" id="circlesArea">
+            <span class="circle">80</span>
+            <span class="circle">70</span>
+        </div>
 
-  <div id="pickerArea">
-    <div class="grid" id="numberGrid"></div>
-    <div class="bet-controls">
-      <span class="bet-minus" onclick="adjustBet(-1)">-</span>
-      <span class="bet-amount" id="betAmountDisplay">2</span>
-      <span class="bet-plus" onclick="adjustBet(1)">+</span>
-      <button class="btn-x2" onclick="setBet(betAmount*2)">X2</button>
-      <button class="btn-max" onclick="setBet(balance)">MAX</button>
+        <div id="pickerArea">
+            <div class="picker-info">Choose 10 numbers · From 1 to 80</div>
+            <div class="quick-actions">
+                <button class="quick-btn" onclick="quickPick()">🎲 Quick Pick</button>
+                <button class="quick-btn" onclick="pickHot()">🔥 Hot Numbers</button>
+                <button class="quick-btn" onclick="pickDue()">⏳ Due Numbers</button>
+                <select class="pattern-select" id="patternSelect" onchange="applyPattern()">
+                    <option value="">📐 Pattern Overlay</option>
+                    <option value="top">Top Half</option>
+                    <option value="bottom">Bottom Half</option>
+                    <option value="odd">Odd Numbers</option>
+                    <option value="even">Even Numbers</option>
+                    <option value="corners">Corners</option>
+                    <option value="center">Center Band</option>
+                    <option value="diagonals">Diagonals</option>
+                    <option value="multiples5">×5 Multiples</option>
+                </select>
+            </div>
+            <div class="grid" id="numberGrid"></div>
+            <div class="bet-controls">
+                <span class="bet-minus" onclick="adjustBet(-1)">-</span>
+                <span class="bet-amount" id="betAmountDisplay">2</span>
+                <span class="bet-plus" onclick="adjustBet(1)">+</span>
+                <button class="btn-x2" onclick="setBet(betAmount*2)">X2</button>
+                <button class="btn-max" onclick="setBet(balance)">MAX</button>
+            </div>
+            <button class="place-bet-btn" onclick="placeTicket()">BET</button>
+            <div class="ticket-area" id="ticketArea">
+                <div class="ticket-label">My Tickets</div>
+                <div class="ticket-list" id="ticketList"></div>
+            </div>
+        </div>
+
+        <div id="drawArea">
+            <div class="draw-id" id="drawRoundId">ID: 1</div>
+            <div class="draw-grid" id="drawGridContainer"></div>
+            <div class="draw-progress" id="drawProgress">0/20</div>
+            <button class="draw-result-btn" id="showResultBtn" onclick="showFinalResult()">SHOW THE RESULTS</button>
+            <button class="back-btn" id="backToGameBtn" onclick="backToGame()">Back to Game</button>
+            <div class="fairness-footer">
+                <span>FAIRNESS</span><br>
+                <span class="footer-logo">ATLAS-V GAMING</span>
+            </div>
+        </div>
+
+        <div class="tabs">
+            <span class="tab active" onclick="switchTab('game')">GAME</span>
+            <span class="tab" onclick="switchTab('history')">HISTORY</span>
+            <span class="tab" onclick="switchTab('results')">RESULTS</span>
+            <span class="tab" onclick="switchTab('stats')">ST.</span>
+        </div>
+
+        <div id="tab-history" class="tab-content" style="margin-top:8px;">
+            <div id="historyContent">Loading...</div>
+        </div>
+        <div id="tab-results" class="tab-content" style="margin-top:8px;">
+            <table class="leader-table">
+                <thead><tr><th>#</th><th>ID</th><th>Bet</th><th>Win</th></tr></thead>
+                <tbody id="leaderboardBody"></tbody>
+            </table>
+        </div>
+        <div id="tab-stats" class="tab-content" style="margin-top:8px;">
+            <div style="margin-bottom:8px;color:#8899aa;font-size:12px;">Number Frequency (last 100 rounds)</div>
+            <div class="stats-grid" id="statsContainer"></div>
+            <div style="margin-top:12px;display:flex;gap:16px;font-size:12px;color:#8899aa;">
+                <span>🔥 Hot: <span style="color:#ed4452;" id="hotNumbers"></span></span>
+                <span>❄️ Cold: <span style="color:#0090ff;" id="coldNumbers"></span></span>
+            </div>
+        </div>
     </div>
-    <button class="place-bet-btn" onclick="placeTicket()">BET</button>
-    <div class="ticket-area" id="ticketArea">
-      <div class="ticket-label">My Tickets</div>
-      <div class="ticket-list" id="ticketList"></div>
-    </div>
-  </div>
 
-  <div id="drawArea">
-    <div class="draw-id" id="drawRoundId">ID: 1</div>
-    <div class="draw-grid" id="drawGridContainer"></div>
-    <div class="draw-progress" id="drawProgress">0/20</div>
-    <button class="draw-result-btn" id="showResultBtn" onclick="showFinalResult()">SHOW THE RESULTS</button>
-    <button class="back-btn" id="backToGameBtn" onclick="backToGame()">Back to Game</button>
-    <div class="fairness-footer">
-      <span>FAIRNESS</span><br>
-      <span>ATLAS-V GAMING</span>
-    </div>
-  </div>
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        const socket = io();
+        const userId = tg.initDataUnsafe?.user?.id || 123456;
+        let balance = 0, roundRemaining = 60, roundActive = true, roundId = 1;
+        let selected = new Set(), myTickets = [], betAmount = 2;
+        let currentDrawn = [], currentWin = 0, drawInProgress = false;
+        let currentPattern = null, freqData = [];
+        const PATTERNS = {
+            top: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40],
+            bottom: [41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80],
+            odd: Array.from({length:40},(_,i)=>i*2+1),
+            even: Array.from({length:40},(_,i)=>i*2+2),
+            corners: [1,2,3,9,10,11,19,20,21,29,30,31,39,40,41,49,50,51,59,60,61,69,70,71,79,80],
+            center: [28,29,30,31,32,33,38,39,40,41,42,43,48,49,50,51,52,53],
+            diagonals: [1,9,10,18,19,27,28,36,37,45,46,54,55,63,64,72,73,79,80,8,17,26,35,44,53,62,71],
+            multiples5: [5,10,15,20,25,30,35,40,45,50,55,60,65,70,75,80]
+        };
 
-  <div class="tabs">
-    <span class="tab active" onclick="switchTab('game')">GAME</span>
-    <span class="tab" onclick="switchTab('history')">HISTORY</span>
-    <span class="tab" onclick="switchTab('results')">RESULTS</span>
-    <span class="tab" onclick="switchTab('stats')">ST.</span>
-  </div>
+        function updateBal(){
+            document.getElementById('balanceDisplay').innerText=balance.toFixed(2)+' ETB';
+        }
 
-  <div id="tab-history" class="tab-content" style="margin-top:8px;">
-    <div id="historyContent">Loading...</div>
-  </div>
-  <div id="tab-results" class="tab-content" style="margin-top:8px;">
-    <table class="leader-table">
-      <thead><tr><th>#</th><th>ID</th><th>Bet</th><th>Win</th></tr></thead>
-      <tbody id="leaderboardBody"></tbody>
-    </table>
-  </div>
-  <div id="tab-stats" class="tab-content" style="margin-top:8px;">
-    <div class="stats-table" id="statsContainer"></div>
-  </div>
-</div>
+        socket.on('connect',()=>{
+            socket.emit('request_balance',{user_id:userId});
+            socket.emit('request_tickets',{user_id:userId});
+        });
+        socket.on('balance',(d)=>{
+            balance=d.balance;updateBal();
+            if(betAmount>balance)betAmount=balance;
+            document.getElementById('betAmountDisplay').innerText=betAmount;
+        });
+        socket.on('round_state',(d)=>{
+            roundRemaining=d.remaining;roundId=d.round_id;
+            document.getElementById('roundId').innerText=`ID: ${roundId}`;
+            updateTimer();
+            if(d.drawn){showDraw(d.drawn,d.winners||{});}
+            else{hideDraw();roundActive=true;renderGrid();}
+        });
+        socket.on('new_round',(d)=>{
+            roundId=d.round_id;roundRemaining=d.duration;roundActive=true;
+            selected.clear();myTickets=[];currentPattern=null;updateTickets();
+            hideDraw();renderGrid();
+            document.getElementById('roundId').innerText=`ID: ${roundId}`;
+            document.getElementById('statusBar').innerText='Pick up to 10 numbers';
+            drawInProgress=false;switchTab('game');
+        });
+        socket.on('draw_result',(d)=>{
+            roundActive=false;showDraw(d.drawn,d.winners);
+        });
+        socket.on('bet_success',(d)=>{
+            myTickets=d.tickets;balance=d.balance;updateBal();
+            selected.clear();renderGrid();updateTickets();
+        });
+        socket.on('your_tickets',(d)=>{myTickets=d.tickets;updateTickets();});
+        socket.on('error',(d)=>alert(d.message));
 
-<script>
-const tg = window.Telegram.WebApp; tg.expand();
-const socket = io();
-const userId = tg.initDataUnsafe?.user?.id || 123456;
-let balance = 0, roundRemaining = 60, roundActive = true, roundId = 1;
-let selected = new Set(), myTickets = [], betAmount = 2, currentDrawn = [], currentWin = 0, drawInProgress = false;
+        setInterval(()=>{
+            if(roundRemaining>0){
+                roundRemaining--;
+                document.getElementById('timerDisplay').innerText=_fmt(roundRemaining);
+                if(roundRemaining<=0){roundActive=false;document.getElementById('statusBar').innerText='Drawing...';}
+                else if(!drawInProgress){
+                    document.getElementById('statusBar').innerText=`Next in ${roundRemaining}s`;
+                }
+            }
+        },1000);
 
-function updateBal() {
-  document.getElementById('balanceDisplay').innerText = balance.toFixed(2) + ' ETB';
-}
+        function _fmt(s){const m=Math.floor(s/60),se=s%60;return`${m.toString().padStart(2,'0')}:${se.toString().padStart(2,'0')}`;}
 
-socket.on('connect', () => {
-  socket.emit('request_balance', {user_id: userId});
-  socket.emit('request_tickets', {user_id: userId});
-});
-socket.on('balance', (d) => {
-  balance = d.balance; updateBal();
-  if (betAmount > balance) betAmount = balance;
-  document.getElementById('betAmountDisplay').innerText = betAmount;
-});
-socket.on('round_state', (d) => {
-  roundRemaining = d.remaining; roundId = d.round_id;
-  document.getElementById('timerDisplay').innerText = _formatTime(roundRemaining);
-  document.getElementById('roundIdDisplay').innerText = `ID: ${roundId}`;
-  if (d.drawn) { showDraw(d.drawn, d.winners || {}); }
-  else { hideDraw(); roundActive = true; renderGrid(); }
-});
-socket.on('new_round', (d) => {
-  roundId = d.round_id; roundRemaining = d.duration; roundActive = true;
-  selected.clear(); myTickets = []; updateTickets();
-  hideDraw(); renderGrid();
-  document.getElementById('timerDisplay').innerText = _formatTime(roundRemaining);
-  document.getElementById('roundIdDisplay').innerText = `ID: ${roundId}`;
-  drawInProgress = false;
-  switchTab('game');
-});
-socket.on('draw_result', (d) => {
-  roundActive = false;
-  showDraw(d.drawn, d.winners);
-});
-socket.on('bet_success', (d) => {
-  myTickets = d.tickets; balance = d.balance; updateBal();
-  selected.clear(); renderGrid(); updateTickets();
-});
-socket.on('your_tickets', (d) => { myTickets = d.tickets; updateTickets(); });
-socket.on('error', (d) => alert(d.message));
+        function renderGrid(){
+            const g=document.getElementById('numberGrid');g.innerHTML='';
+            for(let i=1;i<=80;i++){
+                const d=document.createElement('div');
+                let cls='num';
+                if(selected.has(i))cls+=' selected';
+                if(currentPattern && PATTERNS[currentPattern] && PATTERNS[currentPattern].includes(i))cls+=' pattern-overlay';
+                d.className=cls;d.innerText=i;d.onclick=()=>toggleNum(i);
+                g.appendChild(d);
+            }
+        }
 
-setInterval(() => {
-  if (roundRemaining > 0) {
-    roundRemaining--;
-    document.getElementById('timerDisplay').innerText = _formatTime(roundRemaining);
-    if (roundRemaining <= 0) roundActive = false;
-  }
-}, 1000);
+        function toggleNum(n){
+            if(!roundActive||drawInProgress)return;
+            if(selected.has(n))selected.delete(n);
+            else{if(selected.size>=10){alert('Max 10 numbers');return;}selected.add(n);}
+            renderGrid();
+        }
 
-function _formatTime(sec) {
-  const m = Math.floor(sec/60), s = sec%60;
-  return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
-}
+        function adjustBet(d){
+            let nb=betAmount+d;if(nb<1)nb=1;if(nb>balance)nb=balance;
+            betAmount=nb;document.getElementById('betAmountDisplay').innerText=betAmount;
+        }
+        function setBet(v){
+            betAmount=Math.min(v,balance);if(betAmount<1)betAmount=1;
+            document.getElementById('betAmountDisplay').innerText=betAmount;
+        }
 
-function renderGrid() {
-  const g = document.getElementById('numberGrid'); g.innerHTML = '';
-  for (let i=1; i<=80; i++) {
-    const d = document.createElement('div');
-    d.className = 'num' + (selected.has(i) ? ' selected' : '');
-    d.innerText = i; d.onclick = () => toggleNum(i);
-    g.appendChild(d);
-  }
-}
+        function quickPick(){
+            if(!roundActive)return;
+            selected.clear();
+            const arr=Array.from({length:80},(_,i)=>i+1);
+            for(let i=arr.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[arr[i],arr[j]]=[arr[j],arr[i]];}
+            arr.slice(0,Math.floor(Math.random()*9)+2).forEach(n=>selected.add(n));
+            renderGrid();
+        }
+        function pickHot(){
+            if(!roundActive||freqData.length===0){alert('No stats available yet.');return;}
+            selected.clear();
+            const indexed=freqData.map((f,i)=>({num:i+1,freq:f}));
+            indexed.sort((a,b)=>b.freq-a.freq);
+            indexed.slice(0,10).forEach(x=>selected.add(x.num));
+            renderGrid();
+        }
+        function pickDue(){
+            if(!roundActive||freqData.length===0){alert('No stats available yet.');return;}
+            selected.clear();
+            const indexed=freqData.map((f,i)=>({num:i+1,freq:f}));
+            indexed.sort((a,b)=>a.freq-b.freq);
+            indexed.slice(0,10).forEach(x=>selected.add(x.num));
+            renderGrid();
+        }
+        function applyPattern(){
+            const sel=document.getElementById('patternSelect').value;
+            currentPattern=sel||null;
+            renderGrid();
+        }
 
-function toggleNum(n) {
-  if (!roundActive || drawInProgress) return;
-  if (selected.has(n)) selected.delete(n);
-  else { if (selected.size >= 10) { alert('Max 10 numbers'); return; } selected.add(n); }
-  renderGrid();
-}
+        function placeTicket(){
+            if(!roundActive)return alert('Round not active');
+            if(selected.size===0)return alert('Pick at least 1 number');
+            if(myTickets.length>=5)return alert('Max 5 tickets');
+            if(betAmount>balance)return alert('Insufficient balance');
+            socket.emit('place_bet',{user_id:userId,numbers:Array.from(selected),amount:betAmount});
+        }
 
-function adjustBet(delta) {
-  let nb = betAmount + delta; if (nb < 1) nb = 1; if (nb > balance) nb = balance;
-  betAmount = nb; document.getElementById('betAmountDisplay').innerText = betAmount;
-}
-function setBet(v) {
-  betAmount = Math.min(v, balance); if (betAmount < 1) betAmount = 1;
-  document.getElementById('betAmountDisplay').innerText = betAmount;
-}
+        function updateTickets(){
+            const a=document.getElementById('ticketArea'),l=document.getElementById('ticketList');
+            if(myTickets.length===0){a.style.display='none';return;}
+            a.style.display='block';
+            l.innerHTML=myTickets.map(t=>
+                `<div class="ticket-item">
+                    <span class="ticket-id">${t.mask}</span>
+                    <span class="ticket-nums">${t.numbers.join(' ')}</span>
+                    <span class="ticket-amount">${t.amount.toFixed(2)} ETB</span>
+                    <span class="ticket-status">Waiting</span>
+                </div>`
+            ).join('');
+        }
 
-function placeTicket() {
-  if (!roundActive) return alert('Round not active');
-  if (selected.size === 0) return alert('Pick at least 1 number');
-  if (myTickets.length >= 5) return alert('Max 5 tickets');
-  if (betAmount > balance) return alert('Insufficient balance');
-  socket.emit('place_bet', { user_id: userId, numbers: Array.from(selected), amount: betAmount });
-}
+        function switchTab(tab){
+            document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
+            if(tab==='game'){
+                document.querySelectorAll('.tab')[0].classList.add('active');
+                document.getElementById('pickerArea').style.display=drawInProgress?'none':'block';
+                document.getElementById('drawArea').style.display=drawInProgress?'block':'none';
+            }else if(tab==='history'){
+                document.querySelectorAll('.tab')[1].classList.add('active');
+                hideBoth();document.getElementById('tab-history').classList.add('active');
+                socket.emit('request_history',{user_id:userId});
+            }else if(tab==='results'){
+                document.querySelectorAll('.tab')[2].classList.add('active');
+                hideBoth();document.getElementById('tab-results').classList.add('active');
+                socket.emit('request_leaderboard');
+            }else if(tab==='stats'){
+                document.querySelectorAll('.tab')[3].classList.add('active');
+                hideBoth();document.getElementById('tab-stats').classList.add('active');
+                socket.emit('request_stats');
+            }
+        }
 
-function updateTickets() {
-  const a = document.getElementById('ticketArea'), l = document.getElementById('ticketList');
-  if (myTickets.length === 0) { a.style.display = 'none'; return; }
-  a.style.display = 'block';
-  l.innerHTML = myTickets.map(t =>
-    `<div class="ticket-item">
-      <span class="ticket-id">${t.mask}</span>
-      <span class="ticket-nums">${t.numbers.join(' ')}</span>
-      <span class="ticket-amount">${t.amount.toFixed(2)} ETB</span>
-      <span class="ticket-status">Waiting</span>
-    </div>`
-  ).join('');
-}
+        function hideBoth(){
+            document.getElementById('pickerArea').style.display='none';
+            document.getElementById('drawArea').style.display='none';
+        }
 
-function switchTab(tab) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-  if (tab === 'game') {
-    document.querySelectorAll('.tab')[0].classList.add('active');
-    document.getElementById('pickerArea').style.display = drawInProgress ? 'none' : 'block';
-    document.getElementById('drawArea').style.display = drawInProgress ? 'block' : 'none';
-  } else if (tab === 'history') {
-    document.querySelectorAll('.tab')[1].classList.add('active');
-    hideBoth(); document.getElementById('tab-history').classList.add('active');
-    socket.emit('request_history', {user_id: userId});
-  } else if (tab === 'results') {
-    document.querySelectorAll('.tab')[2].classList.add('active');
-    hideBoth(); document.getElementById('tab-results').classList.add('active');
-    socket.emit('request_leaderboard');
-  } else if (tab === 'stats') {
-    document.querySelectorAll('.tab')[3].classList.add('active');
-    hideBoth(); document.getElementById('tab-stats').classList.add('active');
-    socket.emit('request_stats');
-  }
-}
+        socket.on('history_data',(d)=>{
+            let h=d.history.length===0?'<p style="color:#8899aa;">No history yet.</p>':
+                d.history.map(h=>{
+                    let balls='';
+                    h.drawn.forEach(n=>{
+                        const isMatch=h.numbers.includes(n);
+                        const isPick=h.numbers.includes(n);
+                        balls+=`<span class="history-ball${isMatch?' history-match':''}${isPick&&!isMatch?' history-pick':''}">${n}</span>`;
+                    });
+                    return `<div class="history-item"><b>Round ${h.round_id}</b> - ${h.mask}<br>Numbers: ${h.numbers.join(' ')} | Bet: ${h.amount.toFixed(2)} ETB | Win: ${h.win.toFixed(2)} ETB<div class="history-drawn">${balls}</div></div>`;
+                }).join('');
+            document.getElementById('historyContent').innerHTML=h;
+        });
+        socket.on('leaderboard_data',(d)=>{
+            document.getElementById('leaderboardBody').innerHTML=d.leaders.length===0?
+                '<tr><td colspan="4" style="color:#8899aa;">No big wins yet.</td></tr>':
+                d.leaders.map((l,i)=>`<tr><td>${i+1}</td><td>${l.mask}</td><td>${l.bet}</td><td>${l.win.toFixed(2)} ETB</td></tr>`).join('');
+        });
+        socket.on('stats_data',(d)=>{
+            freqData=d.freq;
+            const maxFreq=Math.max(...d.freq,1);
+            let html='';
+            for(let dec=1;dec<=80;dec+=10){
+                let nums='',counts='';
+                for(let i=dec;i<dec+10;i++){
+                    const intensity=Math.round((d.freq[i-1]/maxFreq)*100);
+                    nums+=`<div class="stats-cell">${i}</div>`;
+                    counts+=`<div class="stats-cell"><span class="freq${intensity>70?' stats-hot':intensity<30?' stats-cold':''}">${d.freq[i-1]}</span><div class="heatmap-bar" style="width:${intensity}%;"></div></div>`;
+                }
+                html+=nums+counts;
+            }
+            document.getElementById('statsContainer').innerHTML=html;
+            // Hot & Cold numbers
+            const indexed=d.freq.map((f,i)=>({num:i+1,freq:f}));
+            indexed.sort((a,b)=>b.freq-a.freq);
+            document.getElementById('hotNumbers').innerText=indexed.slice(0,5).map(x=>x.num).join(', ');
+            document.getElementById('coldNumbers').innerText=indexed.slice(-5).map(x=>x.num).join(', ');
+        });
 
-function hideBoth() {
-  document.getElementById('pickerArea').style.display = 'none';
-  document.getElementById('drawArea').style.display = 'none';
-}
+        function showDraw(drawn,winners){
+            drawInProgress=true;currentDrawn=drawn;currentWin=winners[userId]||0;
+            document.getElementById('pickerArea').style.display='none';
+            document.getElementById('drawArea').style.display='block';
+            switchTab('game');
+            document.getElementById('drawRoundId').innerText=`ID: ${roundId}`;
+            document.getElementById('statusBar').innerText='Drawing...';
+            const c=document.getElementById('drawGridContainer');c.innerHTML='';
+            for(let row=0;row<3;row++){
+                const rd=document.createElement('div');rd.className='draw-row'+(row===2?' draw-extra-row':'');
+                const start=row*9,end=row===2?20:start+9;
+                for(let i=start;i<end;i++){
+                    const n=document.createElement('div');n.className='draw-num';n.id='dn'+i;rd.appendChild(n);
+                }
+                c.appendChild(rd);
+            }
+            document.getElementById('drawProgress').innerText='0/20';
+            document.getElementById('showResultBtn').style.display='none';
+            document.getElementById('backToGameBtn').style.display='none';
+            let idx=0;
+            (function reveal(){
+                if(idx<20){
+                    const el=document.getElementById('dn'+idx);
+                    if(el){el.innerText=drawn[idx];el.classList.add('show');}
+                    document.getElementById('drawProgress').innerText=(idx+1)+'/20';
+                    idx++;setTimeout(reveal,310);
+                }else{
+                    document.getElementById('showResultBtn').style.display='block';
+                    document.getElementById('statusBar').innerText='Round complete';
+                }
+            })();
+        }
 
-socket.on('history_data', (d) => {
-  document.getElementById('historyContent').innerHTML = d.history.length === 0 ?
-    '<p style="color:#8899aa;">No history yet.</p>' :
-    d.history.map(h => `<div class="history-item"><b>Round ${h.round_id}</b> - ${h.mask}<br>Numbers: ${h.numbers.join(' ')} | Bet: ${h.amount.toFixed(2)} ETB<br>Win: ${h.win.toFixed(2)} ETB</div>`).join('');
-});
-socket.on('leaderboard_data', (d) => {
-  document.getElementById('leaderboardBody').innerHTML = d.leaders.length === 0 ?
-    '<tr><td colspan="4" style="color:#8899aa;">No big wins yet.</td></tr>' :
-    d.leaders.map((l,i) => `<tr><td>${i+1}</td><td>${l.mask}</td><td>${l.bet}</td><td>${l.win.toFixed(2)} ETB</td></tr>`).join('');
-});
-socket.on('stats_data', (d) => {
-  let html = '';
-  for (let dec=1; dec<=80; dec+=10) {
-    let nums='', counts='';
-    for (let i=dec; i<dec+10; i++) {
-      nums += `<div class="stats-cell">${i}</div>`;
-      counts += `<div class="stats-cell"><span class="freq">${d.freq[i-1]}</span></div>`;
-    }
-    html += nums + counts;
-  }
-  document.getElementById('statsContainer').innerHTML = html;
-});
+        function hideDraw(){
+            drawInProgress=false;
+            document.getElementById('drawArea').style.display='none';
+            document.getElementById('pickerArea').style.display='block';
+            document.getElementById('showResultBtn').style.display='none';
+            document.getElementById('backToGameBtn').style.display='none';
+            document.getElementById('statusBar').innerText='Pick up to 10 numbers';
+        }
 
-function showDraw(drawn, winners) {
-  drawInProgress = true; currentDrawn = drawn; currentWin = winners[userId] || 0;
-  document.getElementById('pickerArea').style.display = 'none';
-  document.getElementById('drawArea').style.display = 'block';
-  switchTab('game');
-  document.getElementById('drawRoundId').innerText = `ID: ${roundId}`;
-  const c = document.getElementById('drawGridContainer'); c.innerHTML = '';
-  for (let row=0; row<3; row++) {
-    const rd = document.createElement('div'); rd.className = 'draw-row' + (row===2?' draw-extra-row':'');
-    const start = row*9, end = row===2?20:start+9;
-    for (let i=start; i<end; i++) {
-      const n = document.createElement('div'); n.className = 'draw-num'; n.id = 'dn'+i; rd.appendChild(n);
-    }
-    c.appendChild(rd);
-  }
-  document.getElementById('drawProgress').innerText = '0/20';
-  document.getElementById('showResultBtn').style.display = 'none';
-  document.getElementById('backToGameBtn').style.display = 'none';
-  let idx = 0;
-  (function reveal() {
-    if (idx < 20) {
-      const el = document.getElementById('dn'+idx);
-      if (el) { el.innerText = drawn[idx]; el.classList.add('show'); }
-      document.getElementById('drawProgress').innerText = (idx+1)+'/20';
-      idx++; setTimeout(reveal, 300);
-    } else {
-      document.getElementById('showResultBtn').style.display = 'block';
-    }
-  })();
-}
+        function showFinalResult(){
+            document.getElementById('showResultBtn').style.display='none';
+            document.getElementById('backToGameBtn').style.display='block';
+            if(myTickets.length>0)alert(`You won ${currentWin.toFixed(2)} ETB!`);
+            else alert('You did not place any tickets.');
+            balance+=currentWin;updateBal();
+        }
 
-function hideDraw() {
-  drawInProgress = false;
-  document.getElementById('drawArea').style.display = 'none';
-  document.getElementById('pickerArea').style.display = 'block';
-  document.getElementById('showResultBtn').style.display = 'none';
-  document.getElementById('backToGameBtn').style.display = 'none';
-}
+        function backToGame(){hideDraw();switchTab('game');}
 
-function showFinalResult() {
-  document.getElementById('showResultBtn').style.display = 'none';
-  document.getElementById('backToGameBtn').style.display = 'block';
-  if (myTickets.length > 0) alert(`You won ${currentWin.toFixed(2)} ETB!`);
-  else alert('You did not place any tickets.');
-  balance += currentWin; updateBal();
-}
+        function deposit(){
+            const amt=parseFloat(prompt('Deposit amount (ETB):'));
+            if(amt&&amt>0)socket.emit('deposit',{user_id:userId,amount:amt});
+        }
 
-function backToGame() {
-  hideDraw();
-  switchTab('game');
-}
-
-// Deposit can be triggered via an external button if desired, but not shown in game screen per screenshot.
-function deposit() {
-  const amt = parseFloat(prompt('Deposit amount (ETB):'));
-  if (amt && amt>0) socket.emit('deposit', {user_id: userId, amount: amt});
-}
-
-renderGrid();
-document.getElementById('timerDisplay').innerText = _formatTime(roundRemaining);
-document.getElementById('roundIdDisplay').innerText = `ID: ${roundId}`;
-document.getElementById('pickerArea').style.display = 'block';
-document.getElementById('drawArea').style.display = 'none';
-</script>
+        renderGrid();
+        document.getElementById('timerDisplay').innerText=_fmt(roundRemaining);
+        document.getElementById('roundId').innerText=`ID: ${roundId}`;
+        document.getElementById('pickerArea').style.display='block';
+        document.getElementById('drawArea').style.display='none';
+    </script>
 </body>
 </html>'''
 
