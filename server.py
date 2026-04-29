@@ -27,7 +27,6 @@ conn.execute("""CREATE TABLE IF NOT EXISTS tickets (
 )""")
 conn.commit()
 
-# Payouts (1–10 spots)
 PAYTABLE = {
     1:{0:0,1:2},2:{0:0,1:0,2:4},3:{0:0,1:0,2:2,3:12},
     4:{0:0,1:0,2:1,3:5,4:30},5:{0:0,1:0,2:0,3:4,4:15,5:80},
@@ -165,7 +164,7 @@ def round_loop():
         current_round = Round(current_round.id+1)
         socketio.emit('new_round', {'round_id':current_round.id, 'duration':current_round.timer}, room='round')
 
-# ---------- Atlas-V Exact HTML ----------
+# ---------- Final HTML (circles removed, timer fixed, immediate draw) ----------
 HTML = r'''<!DOCTYPE html>
 <html>
 <head>
@@ -186,8 +185,6 @@ HTML = r'''<!DOCTYPE html>
         .round-id{font-size:12px;color:#8899aa;margin-bottom:2px;text-align:left;}
         .timer{font-size:32px;font-weight:700;color:#ffaa00;margin:2px 0 6px;text-align:center;}
         .status-bar{font-size:13px;color:#0090ff;text-align:center;margin:4px 0;font-weight:600;}
-        .circles{display:flex;justify-content:space-between;margin:0 0 8px;}
-        .circle{width:32px;height:32px;border-radius:50%;background:#1c2636;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:15px;color:#aaa;border:2px solid #3a4a5a;}
         .picker-info{font-size:12px;color:#8899aa;margin:0 0 2px;text-align:center;}
         .grid{display:grid;grid-template-columns:repeat(10,1fr);gap:3px;margin:6px 0;}
         .num{
@@ -277,10 +274,6 @@ HTML = r'''<!DOCTYPE html>
         <div class="round-id" id="roundId">ID: 1</div>
         <div class="timer" id="timerDisplay">00:60</div>
         <div class="status-bar" id="statusBar">Pick up to 10 numbers</div>
-        <div class="circles" id="circlesArea">
-            <span class="circle">80</span>
-            <span class="circle">70</span>
-        </div>
 
         <div id="pickerArea">
             <div class="picker-info">Choose 10 numbers · From 1 to 80</div>
@@ -350,7 +343,6 @@ HTML = r'''<!DOCTYPE html>
                 <span>🔥 Hot: <span style="color:#ed4452;" id="hotNumbers"></span></span>
                 <span>❄️ Cold: <span style="color:#0090ff;" id="coldNumbers"></span></span>
             </div>
-            <!-- Game Info Box -->
             <div class="info-box">
                 <b>Provider:</b> Atlas‑V<br>
                 <b>Release Date:</b> 2023-05-20<br>
@@ -381,73 +373,78 @@ HTML = r'''<!DOCTYPE html>
             multiples5: Array.from({length:16},(_,i)=>(i+1)*5)
         };
 
-        function updateBal(){
-            document.getElementById('balanceDisplay').innerText=balance.toFixed(2)+' ETB';
-        }
+        function updateBal(){ document.getElementById('balanceDisplay').innerText = balance.toFixed(2)+' ETB'; }
 
         socket.on('connect',()=>{
             socket.emit('request_balance',{user_id:userId});
             socket.emit('request_tickets',{user_id:userId});
         });
         socket.on('balance',(d)=>{
-            balance=d.balance;updateBal();
-            if(betAmount>balance)betAmount=Math.min(balance, 500);
-            document.getElementById('betAmountDisplay').innerText=betAmount.toFixed(2);
+            balance = d.balance; updateBal();
+            if(betAmount > balance) betAmount = Math.min(balance, 500);
+            document.getElementById('betAmountDisplay').innerText = betAmount.toFixed(2);
         });
         socket.on('round_state',(d)=>{
-            roundRemaining=d.remaining;roundId=d.round_id;
-            document.getElementById('roundId').innerText=`ID: ${roundId}`;
+            roundRemaining = d.remaining; roundId = d.round_id;
+            document.getElementById('roundId').innerText = `ID: ${roundId}`;
             updateTimer();
-            if(d.drawn){showDraw(d.drawn,d.winners||{});}
-            else{hideDraw();roundActive=true;renderGrid();}
+            if(d.drawn){ showDraw(d.drawn, d.winners||{}); }
+            else{ hideDraw(); roundActive = true; renderGrid(); }
         });
         socket.on('new_round',(d)=>{
-            roundId=d.round_id;roundRemaining=d.duration;roundActive=true;
-            selected.clear();myTickets=[];currentPattern=null;updateTickets();
-            hideDraw();renderGrid();
-            document.getElementById('roundId').innerText=`ID: ${roundId}`;
-            document.getElementById('statusBar').innerText='Pick up to 10 numbers';
-            drawInProgress=false;switchTab('game');
+            roundId = d.round_id; roundRemaining = d.duration; roundActive = true;
+            selected.clear(); myTickets=[]; currentPattern=null; updateTickets();
+            hideDraw(); renderGrid();
+            document.getElementById('roundId').innerText = `ID: ${roundId}`;
+            document.getElementById('statusBar').innerText = 'Pick up to 10 numbers';
+            drawInProgress = false; switchTab('game');
         });
         socket.on('draw_result',(d)=>{
-            roundActive=false;showDraw(d.drawn,d.winners);
+            roundActive = false; showDraw(d.drawn, d.winners);
         });
         socket.on('bet_success',(d)=>{
-            myTickets=d.tickets;balance=d.balance;updateBal();
-            selected.clear();renderGrid();updateTickets();
+            myTickets = d.tickets; balance = d.balance; updateBal();
+            selected.clear(); renderGrid(); updateTickets();
         });
-        socket.on('your_tickets',(d)=>{myTickets=d.tickets;updateTickets();});
+        socket.on('your_tickets',(d)=>{ myTickets = d.tickets; updateTickets(); });
         socket.on('error',(d)=>alert(d.message));
 
-        setInterval(()=>{
-            if(roundRemaining>0){
+        // Timer interval – stops when round ends
+        const timerInterval = setInterval(()=>{
+            if(roundRemaining > 0){
                 roundRemaining--;
-                document.getElementById('timerDisplay').innerText=_fmt(roundRemaining);
-                if(roundRemaining<=0){roundActive=false;document.getElementById('statusBar').innerText='Drawing...';}
-                else if(!drawInProgress){
-                    document.getElementById('statusBar').innerText=`Next in ${roundRemaining}s`;
+                document.getElementById('timerDisplay').innerText = _fmt(roundRemaining);
+                if(roundRemaining <= 0){
+                    roundActive = false;
+                    // Hide timer when draw starts
+                    document.getElementById('timerDisplay').style.display = 'none';
+                    document.getElementById('statusBar').innerText = '';
                 }
             }
-        },1000);
+        }, 1000);
 
-        function _fmt(s){const m=Math.floor(s/60),se=s%60;return`${m.toString().padStart(2,'0')}:${se.toString().padStart(2,'0')}`;}
+        function _fmt(s){
+            if(s < 0) s = 0;
+            const m = Math.floor(s/60), se = s%60;
+            return `${m.toString().padStart(2,'0')}:${se.toString().padStart(2,'0')}`;
+        }
 
         function renderGrid(){
-            const g=document.getElementById('numberGrid');g.innerHTML='';
+            const g = document.getElementById('numberGrid'); g.innerHTML = '';
             for(let i=1;i<=80;i++){
-                const d=document.createElement('div');
-                let cls='num';
-                if(selected.has(i))cls+=' selected';
-                if(currentPattern && PATTERNS[currentPattern] && PATTERNS[currentPattern].includes(i))cls+=' pattern-overlay';
-                d.className=cls;d.innerText=i;d.onclick=()=>toggleNum(i);
+                const d = document.createElement('div');
+                let cls = 'num';
+                if(selected.has(i)) cls += ' selected';
+                if(currentPattern && PATTERNS[currentPattern] && PATTERNS[currentPattern].includes(i)) cls += ' pattern-overlay';
+                d.className = cls; d.innerText = i; d.onclick = ()=>toggleNum(i);
                 g.appendChild(d);
             }
         }
 
         function toggleNum(n){
-            if(!roundActive||drawInProgress)return;
-            if(selected.has(n))selected.delete(n);
-            else{if(selected.size>=10){alert('Max 10 numbers');return;}selected.add(n);}
+            if(!roundActive || drawInProgress) return;
+            if(selected.has(n)) selected.delete(n);
+            else{ if(selected.size >= 10){ alert('Max 10 numbers'); return; } selected.add(n); }
             renderGrid();
         }
 
@@ -465,48 +462,48 @@ HTML = r'''<!DOCTYPE html>
         }
 
         function quickPick(){
-            if(!roundActive)return;
+            if(!roundActive) return;
             selected.clear();
-            const arr=Array.from({length:80},(_,i)=>i+1);
-            for(let i=arr.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[arr[i],arr[j]]=[arr[j],arr[i]];}
-            arr.slice(0,Math.floor(Math.random()*9)+2).forEach(n=>selected.add(n));
+            const arr = Array.from({length:80},(_,i)=>i+1);
+            for(let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; }
+            arr.slice(0, Math.floor(Math.random()*9)+2).forEach(n=>selected.add(n));
             renderGrid();
         }
         function pickHot(){
-            if(!roundActive||freqData.length===0){alert('No stats available yet.');return;}
+            if(!roundActive || freqData.length===0){ alert('No stats available yet.'); return; }
             selected.clear();
-            const indexed=freqData.map((f,i)=>({num:i+1,freq:f}));
+            const indexed = freqData.map((f,i)=>({num:i+1,freq:f}));
             indexed.sort((a,b)=>b.freq-a.freq);
             indexed.slice(0,10).forEach(x=>selected.add(x.num));
             renderGrid();
         }
         function pickDue(){
-            if(!roundActive||freqData.length===0){alert('No stats available yet.');return;}
+            if(!roundActive || freqData.length===0){ alert('No stats available yet.'); return; }
             selected.clear();
-            const indexed=freqData.map((f,i)=>({num:i+1,freq:f}));
+            const indexed = freqData.map((f,i)=>({num:i+1,freq:f}));
             indexed.sort((a,b)=>a.freq-b.freq);
             indexed.slice(0,10).forEach(x=>selected.add(x.num));
             renderGrid();
         }
         function applyPattern(){
-            const sel=document.getElementById('patternSelect').value;
-            currentPattern=sel||null;
+            const sel = document.getElementById('patternSelect').value;
+            currentPattern = sel || null;
             renderGrid();
         }
 
         function placeTicket(){
-            if(!roundActive)return alert('Round not active');
-            if(selected.size===0)return alert('Pick at least 1 number');
-            if(myTickets.length>=5)return alert('Max 5 tickets');
-            if(betAmount < 0.2 || betAmount > Math.min(balance, 500)) return alert('Invalid bet amount');
-            socket.emit('place_bet',{user_id:userId,numbers:Array.from(selected),amount:betAmount});
+            if(!roundActive) return alert('Round not active');
+            if(selected.size===0) return alert('Pick at least 1 number');
+            if(myTickets.length>=5) return alert('Max 5 tickets');
+            if(betAmount < 0.2 || betAmount > Math.min(balance, 500)) return alert('Invalid bet');
+            socket.emit('place_bet',{user_id:userId, numbers:Array.from(selected), amount:betAmount});
         }
 
         function updateTickets(){
-            const a=document.getElementById('ticketArea'),l=document.getElementById('ticketList');
-            if(myTickets.length===0){a.style.display='none';return;}
+            const a = document.getElementById('ticketArea'), l = document.getElementById('ticketList');
+            if(myTickets.length===0){ a.style.display='none'; return; }
             a.style.display='block';
-            l.innerHTML=myTickets.map(t=>
+            l.innerHTML = myTickets.map(t=>
                 `<div class="ticket-item">
                     <span class="ticket-id">${t.mask}</span>
                     <span class="ticket-nums">${t.numbers.join(' ')}</span>
@@ -521,19 +518,19 @@ HTML = r'''<!DOCTYPE html>
             document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
             if(tab==='game'){
                 document.querySelectorAll('.tab')[0].classList.add('active');
-                document.getElementById('pickerArea').style.display=drawInProgress?'none':'block';
-                document.getElementById('drawArea').style.display=drawInProgress?'block':'none';
-            }else if(tab==='history'){
+                document.getElementById('pickerArea').style.display = drawInProgress ? 'none' : 'block';
+                document.getElementById('drawArea').style.display = drawInProgress ? 'block' : 'none';
+            } else if(tab==='history'){
                 document.querySelectorAll('.tab')[1].classList.add('active');
-                hideBoth();document.getElementById('tab-history').classList.add('active');
+                hideBoth(); document.getElementById('tab-history').classList.add('active');
                 socket.emit('request_history',{user_id:userId});
-            }else if(tab==='results'){
+            } else if(tab==='results'){
                 document.querySelectorAll('.tab')[2].classList.add('active');
-                hideBoth();document.getElementById('tab-results').classList.add('active');
+                hideBoth(); document.getElementById('tab-results').classList.add('active');
                 socket.emit('request_leaderboard');
-            }else if(tab==='stats'){
+            } else if(tab==='stats'){
                 document.querySelectorAll('.tab')[3].classList.add('active');
-                hideBoth();document.getElementById('tab-stats').classList.add('active');
+                hideBoth(); document.getElementById('tab-stats').classList.add('active');
                 socket.emit('request_stats');
             }
         }
@@ -544,105 +541,113 @@ HTML = r'''<!DOCTYPE html>
         }
 
         socket.on('history_data',(d)=>{
-            let h=d.history.length===0?'<p style="color:#8899aa;">No history yet.</p>':
+            let h = d.history.length===0 ? '<p style="color:#8899aa;">No history yet.</p>' :
                 d.history.map(h=>{
                     let balls='';
                     h.drawn.forEach(n=>{
-                        const isMatch=h.numbers.includes(n);
-                        const isPick=h.numbers.includes(n);
-                        balls+=`<span class="history-ball${isMatch?' history-match':''}${isPick&&!isMatch?' history-pick':''}">${n}</span>`;
+                        const isMatch = h.numbers.includes(n);
+                        balls += `<span class="history-ball${isMatch?' history-match':''}${h.numbers.includes(n)&&!isMatch?' history-pick':''}">${n}</span>`;
                     });
                     return `<div class="history-item"><b>Round ${h.round_id}</b> - ${h.mask}<br>Numbers: ${h.numbers.join(' ')} | Bet: ${h.amount.toFixed(2)} ETB | Win: ${h.win.toFixed(2)} ETB<div class="history-drawn">${balls}</div></div>`;
                 }).join('');
-            document.getElementById('historyContent').innerHTML=h;
+            document.getElementById('historyContent').innerHTML = h;
         });
         socket.on('leaderboard_data',(d)=>{
-            document.getElementById('leaderboardBody').innerHTML=d.leaders.length===0?
-                '<tr><td colspan="4" style="color:#8899aa;">No big wins yet.</td></tr>':
+            document.getElementById('leaderboardBody').innerHTML = d.leaders.length===0 ?
+                '<tr><td colspan="4" style="color:#8899aa;">No big wins yet.</td></tr>' :
                 d.leaders.map((l,i)=>`<tr><td>${i+1}</td><td>${l.mask}</td><td>${l.bet}</td><td>${l.win.toFixed(2)} ETB</td></tr>`).join('');
         });
         socket.on('stats_data',(d)=>{
-            freqData=d.freq;
-            const maxFreq=Math.max(...d.freq,1);
+            freqData = d.freq;
+            const maxFreq = Math.max(...d.freq,1);
             let html='';
-            for(let dec=1;dec<=80;dec+=10){
-                let nums='',counts='';
-                for(let i=dec;i<dec+10;i++){
-                    const intensity=Math.round((d.freq[i-1]/maxFreq)*100);
-                    nums+=`<div class="stats-cell">${i}</div>`;
-                    counts+=`<div class="stats-cell"><span class="freq${intensity>70?' stats-hot':intensity<30?' stats-cold':''}">${d.freq[i-1]}</span><div class="heatmap-bar" style="width:${intensity}%;"></div></div>`;
+            for(let dec=1; dec<=80; dec+=10){
+                let nums='', counts='';
+                for(let i=dec; i<dec+10; i++){
+                    const intensity = Math.round((d.freq[i-1]/maxFreq)*100);
+                    nums += `<div class="stats-cell">${i}</div>`;
+                    counts += `<div class="stats-cell"><span class="freq${intensity>70?' stats-hot':intensity<30?' stats-cold':''}">${d.freq[i-1]}</span><div class="heatmap-bar" style="width:${intensity}%;"></div></div>`;
                 }
-                html+=nums+counts;
+                html += nums + counts;
             }
-            document.getElementById('statsContainer').innerHTML=html;
-            const indexed=d.freq.map((f,i)=>({num:i+1,freq:f}));
+            document.getElementById('statsContainer').innerHTML = html;
+            const indexed = d.freq.map((f,i)=>({num:i+1,freq:f}));
             indexed.sort((a,b)=>b.freq-a.freq);
-            document.getElementById('hotNumbers').innerText=indexed.slice(0,5).map(x=>x.num).join(', ');
-            document.getElementById('coldNumbers').innerText=indexed.slice(-5).map(x=>x.num).join(', ');
+            document.getElementById('hotNumbers').innerText = indexed.slice(0,5).map(x=>x.num).join(', ');
+            document.getElementById('coldNumbers').innerText = indexed.slice(-5).map(x=>x.num).join(', ');
         });
 
-        function showDraw(drawn,winners){
-            drawInProgress=true;currentDrawn=drawn;currentWin=winners[userId]||0;
-            document.getElementById('pickerArea').style.display='none';
-            document.getElementById('drawArea').style.display='block';
+        function showDraw(drawn, winners){
+            drawInProgress = true;
+            currentDrawn = drawn;
+            currentWin = winners[userId] || 0;
+            // Hide timer and status bar
+            document.getElementById('timerDisplay').style.display = 'none';
+            document.getElementById('statusBar').innerText = '';
+            // Switch to draw area
+            document.getElementById('pickerArea').style.display = 'none';
+            document.getElementById('drawArea').style.display = 'block';
             switchTab('game');
-            document.getElementById('drawRoundId').innerText=`ID: ${roundId}`;
-            document.getElementById('statusBar').innerText='Drawing...';
-            const c=document.getElementById('drawGridContainer');c.innerHTML='';
-            for(let row=0;row<3;row++){
-                const rd=document.createElement('div');rd.className='draw-row'+(row===2?' draw-extra-row':'');
-                const start=row*9,end=row===2?20:start+9;
-                for(let i=start;i<end;i++){
-                    const n=document.createElement('div');n.className='draw-num';n.id='dn'+i;rd.appendChild(n);
+            document.getElementById('drawRoundId').innerText = `ID: ${roundId}`;
+            const c = document.getElementById('drawGridContainer'); c.innerHTML = '';
+            for(let row=0; row<3; row++){
+                const rd = document.createElement('div');
+                rd.className = 'draw-row' + (row===2 ? ' draw-extra-row' : '');
+                const start = row*9, end = row===2 ? 20 : start+9;
+                for(let i=start; i<end; i++){
+                    const n = document.createElement('div');
+                    n.className = 'draw-num'; n.id = 'dn'+i;
+                    rd.appendChild(n);
                 }
                 c.appendChild(rd);
             }
-            document.getElementById('drawProgress').innerText='0/20';
-            document.getElementById('showResultBtn').style.display='none';
-            document.getElementById('backToGameBtn').style.display='none';
-            let idx=0;
+            document.getElementById('drawProgress').innerText = '0/20';
+            document.getElementById('showResultBtn').style.display = 'none';
+            document.getElementById('backToGameBtn').style.display = 'none';
+            let idx = 0;
             (function reveal(){
-                if(idx<20){
-                    const el=document.getElementById('dn'+idx);
-                    if(el){el.innerText=drawn[idx];el.classList.add('show');}
-                    document.getElementById('drawProgress').innerText=(idx+1)+'/20';
-                    idx++;setTimeout(reveal,310);
-                }else{
-                    document.getElementById('showResultBtn').style.display='block';
-                    document.getElementById('statusBar').innerText='Round complete';
+                if(idx < 20){
+                    const el = document.getElementById('dn'+idx);
+                    if(el){ el.innerText = drawn[idx]; el.classList.add('show'); }
+                    document.getElementById('drawProgress').innerText = (idx+1)+'/20';
+                    idx++;
+                    setTimeout(reveal, 310);
+                } else {
+                    document.getElementById('showResultBtn').style.display = 'block';
                 }
             })();
         }
 
         function hideDraw(){
-            drawInProgress=false;
-            document.getElementById('drawArea').style.display='none';
-            document.getElementById('pickerArea').style.display='block';
-            document.getElementById('showResultBtn').style.display='none';
-            document.getElementById('backToGameBtn').style.display='none';
-            document.getElementById('statusBar').innerText='Pick up to 10 numbers';
+            drawInProgress = false;
+            document.getElementById('drawArea').style.display = 'none';
+            document.getElementById('pickerArea').style.display = 'block';
+            document.getElementById('timerDisplay').style.display = 'block';   // show timer again for new round
+            document.getElementById('showResultBtn').style.display = 'none';
+            document.getElementById('backToGameBtn').style.display = 'none';
+            document.getElementById('statusBar').innerText = 'Pick up to 10 numbers';
         }
 
         function showFinalResult(){
-            document.getElementById('showResultBtn').style.display='none';
-            document.getElementById('backToGameBtn').style.display='block';
-            if(myTickets.length>0)alert(`You won ${currentWin.toFixed(2)} ETB!`);
+            document.getElementById('showResultBtn').style.display = 'none';
+            document.getElementById('backToGameBtn').style.display = 'block';
+            if(myTickets.length > 0) alert(`You won ${currentWin.toFixed(2)} ETB!`);
             else alert('You did not place any tickets.');
-            balance+=currentWin;updateBal();
+            balance += currentWin; updateBal();
         }
 
-        function backToGame(){hideDraw();switchTab('game');}
+        function backToGame(){ hideDraw(); switchTab('game'); }
 
         function deposit(){
-            const amt=parseFloat(prompt('Deposit amount (ETB):'));
-            if(amt&&amt>0)socket.emit('deposit',{user_id:userId,amount:amt});
+            const amt = parseFloat(prompt('Deposit amount (ETB):'));
+            if(amt && amt>0) socket.emit('deposit', {user_id: userId, amount: amt});
         }
 
         renderGrid();
-        document.getElementById('timerDisplay').innerText=_fmt(roundRemaining);
-        document.getElementById('roundId').innerText=`ID: ${roundId}`;
-        document.getElementById('pickerArea').style.display='block';
-        document.getElementById('drawArea').style.display='none';
+        document.getElementById('timerDisplay').innerText = _fmt(roundRemaining);
+        document.getElementById('roundId').innerText = `ID: ${roundId}`;
+        document.getElementById('pickerArea').style.display = 'block';
+        document.getElementById('drawArea').style.display = 'none';
     </script>
 </body>
 </html>'''
