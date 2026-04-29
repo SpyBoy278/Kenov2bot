@@ -7,7 +7,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Create a button that opens the Mini App
     button = KeyboardButton(
         text="🎲 Play Fast Keno",
-        web_app=WebAppInfo(url="https://kenov2bot-4.onrender.com")  # replace with your server's URL
+        web_app=WebAppInfo(url="https://kenov2bot-v13onrender.com")  # replace with your server's URL
     )
     markup = ReplyKeyboardMarkup([[button]], resize_keyboard=True)
     await update.message.reply_text("Welcome! Tap the button to play.", reply_markup=markup)
