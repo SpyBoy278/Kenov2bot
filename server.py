@@ -23,13 +23,26 @@ class Round:
     def __init__(self, rid):
         self.id = rid
         self.start_time = time.time()
-        self.bets = {}
+        self.bets = {}          # user_id -> list of {"numbers", "amount", "ticket_id", "spots"}
         self.drawn = None
         self.timer = 60
 
 current_round = Round(1)
 
-PAYTABLE = {0:0,1:0,2:0,3:1,4:2,5:5,6:25,7:100,8:500,9:1000,10:5000}
+# ---------- Payout Table for Spots 1–10 ----------
+# Format: PAYTABLE[spots][matches] = multiplier
+PAYTABLE = {
+    1: {0:0, 1:2},
+    2: {0:0, 1:0, 2:4},
+    3: {0:0, 1:0, 2:2, 3:12},
+    4: {0:0, 1:0, 2:1, 3:5, 4:30},
+    5: {0:0, 1:0, 2:0, 3:4, 4:15, 5:80},
+    6: {0:0, 1:0, 2:0, 3:3, 4:10, 5:50, 6:200},
+    7: {0:0, 1:0, 2:0, 3:2, 4:5, 5:20, 6:100, 7:500},
+    8: {0:0, 1:0, 2:0, 3:1, 4:3, 5:10, 6:40, 7:200, 8:1000},
+    9: {0:0, 1:0, 2:0, 3:1, 4:2, 5:8, 6:30, 7:150, 8:600, 9:2000},
+    10:{0:0, 1:0, 2:0, 3:1, 4:2, 5:5, 6:25, 7:100, 8:500, 9:1000, 10:5000}
+}
 
 def generate_ticket_id():
     chars = string.digits
@@ -45,7 +58,8 @@ def process_draw(round_obj):
         total_win = 0
         for t in tickets:
             matches = len(set(t['numbers']) & set(drawn))
-            mult = PAYTABLE.get(matches, 0)
+            spots = t['spots']
+            mult = PAYTABLE.get(spots, {}).get(matches, 0)
             total_win += t['amount'] * mult
         if total_win > 0:
             cur = conn.cursor()
@@ -89,10 +103,11 @@ def handle_deposit(data):
 @socketio.on('place_bet')
 def handle_bet(data):
     user_id = data['user_id']
-    numbers = data['numbers']
+    numbers = data['numbers']  # list of ints
     amount = float(data['amount'])
-    if len(numbers) != 10:
-        emit('error', {'message': 'Pick exactly 10 numbers'})
+    spots = len(numbers)
+    if spots < 1 or spots > 10:
+        emit('error', {'message': 'Pick between 1 and 10 numbers'})
         return
     if amount > get_balance(user_id):
         emit('error', {'message': 'Insufficient balance'})
@@ -104,10 +119,10 @@ def handle_bet(data):
     cur.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (amount, user_id))
     conn.commit()
     ticket_id = generate_ticket_id()
-    ticket = {'numbers': numbers, 'amount': amount, 'ticket_id': ticket_id}
+    ticket = {'numbers': numbers, 'amount': amount, 'ticket_id': ticket_id, 'spots': spots}
     current_round.bets.setdefault(user_id, []).append(ticket)
     emit('bet_success', {
-        'tickets': [{'id': t['ticket_id'], 'amount': t['amount']} for t in current_round.bets[user_id]],
+        'tickets': [{'id': t['ticket_id'], 'numbers': t['numbers'], 'amount': t['amount']} for t in current_round.bets[user_id]],
         'balance': get_balance(user_id)
     })
 
@@ -115,7 +130,7 @@ def handle_bet(data):
 def handle_request_tickets(data):
     user_id = data['user_id']
     tickets = current_round.bets.get(user_id, [])
-    emit('your_tickets', {'tickets': [{'id': t['ticket_id'], 'amount': t['amount']} for t in tickets]})
+    emit('your_tickets', {'tickets': [{'id': t['ticket_id'], 'numbers': t['numbers'], 'amount': t['amount']} for t in tickets]})
 
 # ---------- Round Manager ----------
 def round_loop():
@@ -134,7 +149,7 @@ def round_loop():
             'duration': current_round.timer
         }, room='round')
 
-# ---------- Embedded HTML (Pixel‑Perfect Clone) ----------
+# ---------- Embedded HTML (1–10 spots, Lite Games style) ----------
 HTML = r'''<!DOCTYPE html>
 <html>
 <head>
@@ -147,12 +162,11 @@ HTML = r'''<!DOCTYPE html>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #0b0f14; color: #d1d4d8;
-            padding: 12px 8px;
-            min-height: 100vh;
+            padding: 12px 8px; min-height: 100vh;
         }
         .top-bar {
             display: flex; justify-content: space-between; align-items: center;
-            margin-bottom: 10px; font-size: 15px;
+            margin-bottom: 5px; font-size: 15px;
         }
         .balance {
             background: #182230; padding: 6px 14px; border-radius: 20px;
@@ -164,15 +178,24 @@ HTML = r'''<!DOCTYPE html>
             font-weight: 600; cursor: pointer;
         }
         .round-id {
-            text-align: left; font-size: 13px; color: #8899aa; margin-bottom: 5px;
+            text-align: left; font-size: 13px; color: #8899aa; margin-bottom: 2px;
         }
         .timer {
             font-size: 34px; font-weight: 700; color: #ffaa00;
-            margin: 8px 0; text-align: center;
+            margin: 5px 0; text-align: center;
+        }
+        .circles {
+            display: flex; justify-content: space-between; margin: 10px 0;
+        }
+        .circle {
+            width: 36px; height: 36px; border-radius: 50%;
+            background: #1c2636; display: flex; align-items: center;
+            justify-content: center; font-weight: bold; font-size: 18px;
+            color: #aaa; border: 2px solid #3a4a5a;
         }
         .grid {
             display: grid; grid-template-columns: repeat(10, 1fr);
-            gap: 4px; margin: 15px 5px; user-select: none;
+            gap: 4px; margin: 10px 5px; user-select: none;
         }
         .num {
             background: #1c2636; border-radius: 5px; padding: 14px 0;
@@ -180,10 +203,12 @@ HTML = r'''<!DOCTYPE html>
             transition: background 0.1s; color: #c0c8d0;
         }
         .num.selected { background: #4caf50; color: white; }
+        .pick-info {
+            font-size: 14px; color: #8899aa; margin: 5px 0 10px;
+        }
         .ticket-area { margin: 10px 0; }
         .ticket-label {
-            font-size: 14px; color: #8899aa; margin-bottom: 4px;
-            text-align: left;
+            font-size: 14px; color: #8899aa; margin-bottom: 4px; text-align: left;
         }
         .ticket-list {
             background: #131c26; border-radius: 6px; padding: 8px 10px;
@@ -195,6 +220,7 @@ HTML = r'''<!DOCTYPE html>
         }
         .ticket-item:last-child { border-bottom: none; }
         .ticket-id { font-family: monospace; color: #ccc; }
+        .ticket-nums { font-family: monospace; color: #aaa; }
         .ticket-status { color: #ffaa00; font-weight: 500; }
         .place-btn {
             background: #e55300; color: white; border: none;
@@ -211,7 +237,7 @@ HTML = r'''<!DOCTYPE html>
 
         /* Draw Screen */
         .draw-screen { display: none; }
-        .draw-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .draw-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
         .draw-id { font-size: 13px; color: #8899aa; }
         .draw-grid {
             display: flex; flex-wrap: wrap; justify-content: center;
@@ -245,18 +271,19 @@ HTML = r'''<!DOCTYPE html>
             <span class="balance" id="balanceDisplay">0.00 ETB</span>
             <button class="deposit-btn" onclick="deposit()">Deposit</button>
         </div>
-        <div class="round-id" id="roundId">Round #1</div>
+        <div class="round-id" id="roundId">ID: 1</div>
         <div class="timer" id="timerDisplay">00:60</div>
-
+        <div class="circles">
+            <span class="circle">80</span>
+            <span class="circle">70</span>
+        </div>
+        <div class="pick-info" id="pickInfo">Pick up to 10 numbers</div>
         <div class="grid" id="numberGrid"></div>
-
         <div class="ticket-area" id="ticketArea" style="display:none;">
             <div class="ticket-label">Your Tickets</div>
             <div class="ticket-list" id="ticketList"></div>
         </div>
-
         <button class="place-btn" id="placeTicketBtn" onclick="placeTicket()">Place Ticket (0/5)</button>
-
         <div class="tabs">
             <span class="tab active">GAME</span>
             <span class="tab">HISTORY</span>
@@ -271,7 +298,7 @@ HTML = r'''<!DOCTYPE html>
             <span class="balance" id="drawBalance">0.00 ETB</span>
             <button class="deposit-btn" onclick="deposit()">Deposit</button>
         </div>
-        <div class="draw-id" id="drawRoundId">ID: 877020462</div>
+        <div class="draw-id" id="drawRoundId">ID: 1</div>
         <div class="draw-grid" id="drawGridContainer"></div>
         <div class="draw-progress" id="drawProgress">0/20</div>
         <button class="back-btn" id="backToGameBtn" onclick="backToGame()">New Round</button>
@@ -385,13 +412,18 @@ HTML = r'''<!DOCTYPE html>
                 grid.appendChild(div);
             }
             document.getElementById('placeTicketBtn').innerText = `Place Ticket (${myTickets.length}/5)`;
+            document.getElementById('pickInfo').innerText = selected.size === 0 ? 'Pick up to 10 numbers' : `Selected: ${selected.size}/10`;
         }
 
         function toggleNumber(num) {
             if (!roundActive) return;
-            if (selected.has(num)) selected.delete(num);
-            else {
-                if (selected.size >= 10) return alert('Max 10 numbers');
+            if (selected.has(num)) {
+                selected.delete(num);
+            } else {
+                if (selected.size >= 10) {
+                    alert('Maximum 10 numbers');
+                    return;
+                }
                 selected.add(num);
             }
             renderGrid();
@@ -399,7 +431,7 @@ HTML = r'''<!DOCTYPE html>
 
         function placeTicket() {
             if (!roundActive) return alert('Round not active');
-            if (selected.size !== 10) return alert('Pick exactly 10 numbers');
+            if (selected.size === 0) return alert('Pick at least 1 number');
             if (myTickets.length >= 5) return alert('Max 5 tickets');
             const betAmount = parseFloat(prompt('Enter bet amount (ETB):'));
             if (!betAmount || betAmount <= 0) return;
@@ -422,6 +454,7 @@ HTML = r'''<!DOCTYPE html>
             list.innerHTML = myTickets.map(t =>
                 `<div class="ticket-item">
                     <span class="ticket-id">${t.id}</span>
+                    <span class="ticket-nums">${t.numbers.join(' ')}</span>
                     <span>Bet ${t.amount.toFixed(2)} ETB</span>
                     <span class="ticket-status">Waiting</span>
                 </div>`
@@ -437,7 +470,6 @@ HTML = r'''<!DOCTYPE html>
             // Build 9-9-2 layout
             const container = document.getElementById('drawGridContainer');
             container.innerHTML = '';
-            // Row1: first 9 numbers
             const row1 = document.createElement('div');
             row1.className = 'draw-row';
             for (let i = 0; i < 9; i++) {
@@ -448,7 +480,6 @@ HTML = r'''<!DOCTYPE html>
                 row1.appendChild(nDiv);
             }
             container.appendChild(row1);
-            // Row2: next 9 numbers
             const row2 = document.createElement('div');
             row2.className = 'draw-row';
             for (let i = 9; i < 18; i++) {
@@ -459,7 +490,6 @@ HTML = r'''<!DOCTYPE html>
                 row2.appendChild(nDiv);
             }
             container.appendChild(row2);
-            // Row3: last 2 numbers centered
             const row3 = document.createElement('div');
             row3.className = 'draw-row draw-extra-row';
             for (let i = 18; i < 20; i++) {
