@@ -30,7 +30,7 @@ conn.execute("""CREATE TABLE IF NOT EXISTS tickets (
 )""")
 conn.commit()
 
-# ---------- Payouts (1-10 spots) ----------
+# ---------- Payouts ----------
 PAYTABLE = {
     1: {0:0, 1:2},
     2: {0:0, 1:0, 2:4},
@@ -176,7 +176,7 @@ def round_loop():
         current_round = Round(current_round.id+1)
         socketio.emit('new_round', {'round_id':current_round.id, 'duration':current_round.timer}, room='round')
 
-# ---------- HTML (Atlas-V exact clone) ----------
+# ---------- HTML (Integrated draw, exact colors) ----------
 HTML = r'''<!DOCTYPE html>
 <html>
 <head>
@@ -196,10 +196,10 @@ HTML = r'''<!DOCTYPE html>
         .deposit-btn { background: #2e7d32; color: white; border: none; padding: 8px 16px; border-radius: 20px; font-size: 15px; font-weight: 600; cursor: pointer; }
         .round-id { font-size: 13px; color: #8899aa; margin-bottom: 4px; text-align: left; }
         .timer { font-size: 34px; font-weight: 700; color: #ffaa00; margin: 6px 0 10px; text-align: center; }
-        .circles { display: flex; justify-content: space-between; margin: 0 0 15px; }
+        .circles { display: flex; justify-content: space-between; margin: 0 0 8px; }
         .circle { width: 36px; height: 36px; border-radius: 50%; background: #1c2636; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 17px; color: #aaa; border: 2px solid #3a4a5a; }
-        .pick-info { font-size: 14px; color: #8899aa; margin: 0 0 4px; text-align: center; }
-        .pick-sub { font-size: 12px; color: #667788; margin-bottom: 10px; text-align: center; }
+        .picker-info { font-size: 14px; color: #8899aa; margin: 0 0 2px; text-align: center; }
+        .picker-sub { font-size: 12px; color: #667788; margin-bottom: 10px; text-align: center; }
         .grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 5px; margin: 10px 0; }
         .num { background: #1c2636; border-radius: 6px; padding: 14px 0; font-size: 15px; font-weight: 500; text-align: center; cursor: pointer; color: #c0c8d0; transition: background 0.1s; }
         .num.selected { background: #4caf50; color: white; font-weight: bold; }
@@ -216,38 +216,37 @@ HTML = r'''<!DOCTYPE html>
         .ticket-id { font-family: monospace; color: #ccc; width: 60px; }
         .ticket-nums { font-family: monospace; color: #aaa; flex: 1; padding-left: 8px; }
         .ticket-amount { min-width: 70px; text-align: right; }
-        .ticket-status { color: #ffaa00; font-weight: 500; min-width: 60px; text-align: right; }
+        .ticket-status { color: #d4a017; font-weight: 500; min-width: 60px; text-align: right; }   /* soft yellow */
         .tabs { display: flex; justify-content: space-around; background: #152028; padding: 12px 0; border-radius: 10px; margin-top: 15px; font-size: 14px; color: #667788; font-weight: 600; }
         .tab { cursor: pointer; padding: 0 4px; }
         .tab.active { color: #4caf50; }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
 
-        /* Stats table */
-        .stats-table { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; margin: 10px 0; }
-        .stats-cell { background: #1c2636; border-radius: 4px; padding: 8px 0; text-align: center; font-size: 14px; color: #c0c8d0; }
-        .stats-cell .freq { font-size: 18px; font-weight: bold; color: #ffaa00; }
-
-        /* Leaderboard table */
-        .leader-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        .leader-table th, .leader-table td { padding: 8px 4px; font-size: 14px; border-bottom: 1px solid #233045; }
-        .leader-table th { color: #8899aa; font-weight: 500; text-align: left; }
-        .leader-table td { color: #d1d4d8; }
-
-        /* History items */
-        .history-item { background: #131c26; border-radius: 8px; padding: 10px; margin-bottom: 8px; font-size: 14px; }
-
-        .draw-overlay { position: fixed; top:0; left:0; width:100%; height:100%; background: #0b0f14; z-index: 1000; display: none; padding: 20px 12px; overflow-y: auto; }
+        /* Draw area (inside game screen) */
+        #drawArea { display: none; }
         .draw-id { font-size: 13px; color: #8899aa; margin-bottom: 20px; }
-        .draw-grid { margin: 20px 0; }
-        .draw-row { display: flex; justify-content: center; gap: 6px; margin-bottom: 6px; }
+        .draw-grid { margin: 20px 0; display: flex; flex-wrap: wrap; justify-content: center; }
+        .draw-row { display: flex; justify-content: center; gap: 6px; margin-bottom: 6px; width: 100%; }
         .draw-num { background: #1c2636; width: 34px; height: 38px; display: flex; align-items: center; justify-content: center; border-radius: 5px; font-size: 18px; font-weight: 600; color: transparent; transition: all 0.2s; }
         .draw-num.show { background: #ed4452; color: white; }
-        .draw-extra-row { justify-content: center; gap: 16px; margin-top: 4px; }
+        .draw-extra-row { justify-content: center; gap: 16px; }
         .draw-progress { font-size: 20px; margin: 12px 0; color: #ffaa00; text-align: center; }
         .draw-result-btn { background: #2e7d32; color: white; border: none; padding: 14px; border-radius: 8px; font-size: 18px; font-weight: bold; width: 100%; cursor: pointer; margin-top: 20px; display: none; }
         .back-btn { background: #2e7d32; color: white; border: none; padding: 14px; border-radius: 8px; font-size: 18px; font-weight: bold; width: 100%; cursor: pointer; margin-top: 15px; display: none; }
         .fairness-footer { text-align: center; margin-top: 20px; padding-top: 15px; border-top: 1px solid #2a3a4a; font-size: 13px; color: #667788; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* Leaderboard table */
+        .leader-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        .leader-table th, .leader-table td { padding: 8px 4px; font-size: 14px; border-bottom: 1px solid #233045; text-align: left; color: #d1d4d8; }
+        .leader-table th { color: #8899aa; font-weight: 500; }
+
+        /* Stats grid */
+        .stats-table { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; margin: 10px 0; }
+        .stats-cell { background: #1c2636; border-radius: 4px; padding: 8px 0; text-align: center; font-size: 14px; color: #c0c8d0; }
+        .stats-cell .freq { font-size: 18px; font-weight: bold; color: #ffffff; } /* white, not orange */
+
+        .history-item { background: #131c26; border-radius: 8px; padding: 10px; margin-bottom: 8px; font-size: 14px; }
     </style>
 </head>
 <body>
@@ -258,19 +257,15 @@ HTML = r'''<!DOCTYPE html>
         </div>
         <div class="round-id" id="roundId">ID: 1</div>
         <div class="timer" id="timerDisplay">00:60</div>
-        <div class="circles">
+        <div class="circles" id="circlesArea">
             <span class="circle">80</span>
             <span class="circle">70</span>
         </div>
-        <div class="tabs">
-            <span class="tab active" onclick="switchTab('game')">GAME</span>
-            <span class="tab" onclick="switchTab('history')">HISTORY</span>
-            <span class="tab" onclick="switchTab('results')">RESULTS</span>
-            <span class="tab" onclick="switchTab('stats')">ST.</span>
-        </div>
-        <div id="tab-game" class="tab-content active">
-            <div class="pick-info">Choose 10 numbers</div>
-            <div class="pick-sub">From 1 to 80</div>
+
+        <!-- Dynamic content area (picker, draw, or tabs content) -->
+        <div id="pickerArea">
+            <div class="picker-info">Choose 10 numbers</div>
+            <div class="picker-sub">From 1 to 80</div>
             <div class="grid" id="numberGrid"></div>
             <div class="bet-controls">
                 <button class="btn-sm" onclick="adjustBet(-1)">-</button>
@@ -285,34 +280,39 @@ HTML = r'''<!DOCTYPE html>
                 <div class="ticket-list" id="ticketList"></div>
             </div>
         </div>
-        <div id="tab-history" class="tab-content">
+
+        <div id="drawArea">
+            <div class="draw-id" id="drawRoundId">ID: 1</div>
+            <div class="draw-grid" id="drawGridContainer"></div>
+            <div class="draw-progress" id="drawProgress">0/20</div>
+            <button class="draw-result-btn" id="showResultBtn" onclick="showFinalResult()">SHOW THE RESULTS</button>
+            <button class="back-btn" id="backToGameBtn" onclick="backToGame()">Back to Game</button>
+            <div class="fairness-footer">
+                <span>FAIRNESS</span>
+                <span>ATLAS-V GAMING</span>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="tabs">
+            <span class="tab active" onclick="switchTab('game')">GAME</span>
+            <span class="tab" onclick="switchTab('history')">HISTORY</span>
+            <span class="tab" onclick="switchTab('results')">RESULTS</span>
+            <span class="tab" onclick="switchTab('stats')">ST.</span>
+        </div>
+
+        <!-- Tab contents for HISTORY, RESULTS, STATS -->
+        <div id="tab-history" class="tab-content" style="margin-top:10px;">
             <div id="historyContent">Loading...</div>
         </div>
-        <div id="tab-results" class="tab-content">
+        <div id="tab-results" class="tab-content" style="margin-top:10px;">
             <table class="leader-table">
                 <thead><tr><th>#</th><th>ID</th><th>Bet</th><th>Win</th></tr></thead>
                 <tbody id="leaderboardBody"></tbody>
             </table>
         </div>
-        <div id="tab-stats" class="tab-content">
+        <div id="tab-stats" class="tab-content" style="margin-top:10px;">
             <div class="stats-table" id="statsContainer"></div>
-        </div>
-    </div>
-
-    <!-- Draw overlay -->
-    <div id="drawOverlay" class="draw-overlay">
-        <div class="top-bar" style="margin-bottom:10px;">
-            <span class="balance" id="drawBalance">0.00 ETB</span>
-            <button class="deposit-btn" onclick="deposit()">Deposit</button>
-        </div>
-        <div class="draw-id" id="drawRoundId">ID: 1</div>
-        <div class="draw-grid" id="drawGridContainer"></div>
-        <div class="draw-progress" id="drawProgress">0/20</div>
-        <button class="draw-result-btn" id="showResultBtn" onclick="showFinalResult()">SHOW THE RESULTS</button>
-        <button class="back-btn" id="backToGameBtn" onclick="backToGame()">Back to Game</button>
-        <div class="fairness-footer">
-            <span>FAIRNESS</span>
-            <span>ATLAS-V GAMING</span>
         </div>
     </div>
 
@@ -326,12 +326,13 @@ HTML = r'''<!DOCTYPE html>
         let myTickets = [];
         let betAmount = 2;
         let currentDrawn = [], currentWin = 0;
+        let drawInProgress = false;   // true when draw is being shown
 
         function updateBalanceDisplay() {
             document.getElementById('balanceDisplay').innerText = balance.toFixed(2) + ' ETB';
-            document.getElementById('drawBalance').innerText = balance.toFixed(2) + ' ETB';
         }
 
+        // Socket events
         socket.on('connect', () => {
             socket.emit('request_balance', {user_id: userId});
             socket.emit('request_tickets', {user_id: userId});
@@ -348,10 +349,10 @@ HTML = r'''<!DOCTYPE html>
             document.getElementById('roundId').innerText = `ID: ${roundId}`;
             updateTimer();
             if (data.drawn) {
-                showDrawOverlay(data.drawn, data.winners || {});
+                // Show draw immediately
+                showDrawArea(data.drawn, data.winners || {});
             } else {
-                document.getElementById('drawOverlay').style.display = 'none';
-                document.getElementById('gameScreen').style.display = 'block';
+                hideDrawArea();
                 roundActive = true;
                 renderGrid();
             }
@@ -363,15 +364,17 @@ HTML = r'''<!DOCTYPE html>
             selected.clear();
             myTickets = [];
             updateTicketUI();
+            hideDrawArea();
             renderGrid();
-            document.getElementById('drawOverlay').style.display = 'none';
-            document.getElementById('gameScreen').style.display = 'block';
             document.getElementById('roundId').innerText = `ID: ${roundId}`;
             updateTimer();
+            drawInProgress = false;
+            // Switch to GAME tab automatically
+            switchTab('game');
         });
         socket.on('draw_result', (data) => {
             roundActive = false;
-            showDrawOverlay(data.drawn, data.winners);
+            showDrawArea(data.drawn, data.winners);
         });
         socket.on('bet_success', (data) => {
             myTickets = data.tickets;
@@ -384,6 +387,7 @@ HTML = r'''<!DOCTYPE html>
         socket.on('your_tickets', (data) => { myTickets = data.tickets; updateTicketUI(); });
         socket.on('error', (data) => { alert(data.message); });
 
+        // Timer countdown
         setInterval(() => {
             if (roundRemaining > 0) {
                 roundRemaining--;
@@ -397,6 +401,7 @@ HTML = r'''<!DOCTYPE html>
             document.getElementById('timerDisplay').innerText = `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
         }
 
+        // Grid rendering
         function renderGrid() {
             const grid = document.getElementById('numberGrid');
             grid.innerHTML = '';
@@ -410,7 +415,7 @@ HTML = r'''<!DOCTYPE html>
         }
 
         function toggleNum(n) {
-            if (!roundActive) return;
+            if (!roundActive || drawInProgress) return;
             if (selected.has(n)) selected.delete(n);
             else {
                 if (selected.size >= 10) { alert('Max 10 numbers'); return; }
@@ -419,6 +424,7 @@ HTML = r'''<!DOCTYPE html>
             renderGrid();
         }
 
+        // Bet controls
         function adjustBet(delta) {
             let newBet = betAmount + delta;
             if (newBet < 1) newBet = 1;
@@ -455,17 +461,50 @@ HTML = r'''<!DOCTYPE html>
                 </div>`).join('');
         }
 
+        // Tab switching
         function switchTab(tab) {
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            const tabs = document.querySelectorAll('.tab');
+            tabs.forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            document.getElementById(`tab-${tab}`).classList.add('active');
-            const idx = ['game','history','results','stats'].indexOf(tab);
-            document.querySelectorAll('.tab')[idx].classList.add('active');
-            if (tab === 'history') loadHistory();
-            else if (tab === 'results') loadLeaderboard();
-            else if (tab === 'stats') loadStats();
+
+            if (tab === 'game') {
+                tabs[0].classList.add('active');
+                // If a draw is active, show draw area; else show picker
+                if (drawInProgress) {
+                    document.getElementById('pickerArea').style.display = 'none';
+                    document.getElementById('drawArea').style.display = 'block';
+                } else {
+                    document.getElementById('pickerArea').style.display = 'block';
+                    document.getElementById('drawArea').style.display = 'none';
+                }
+                // Hide other tab contents
+                document.getElementById('tab-history').classList.remove('active');
+                document.getElementById('tab-results').classList.remove('active');
+                document.getElementById('tab-stats').classList.remove('active');
+            } else if (tab === 'history') {
+                tabs[1].classList.add('active');
+                hidePickerAndDraw();
+                document.getElementById('tab-history').classList.add('active');
+                loadHistory();
+            } else if (tab === 'results') {
+                tabs[2].classList.add('active');
+                hidePickerAndDraw();
+                document.getElementById('tab-results').classList.add('active');
+                loadLeaderboard();
+            } else if (tab === 'stats') {
+                tabs[3].classList.add('active');
+                hidePickerAndDraw();
+                document.getElementById('tab-stats').classList.add('active');
+                loadStats();
+            }
         }
 
+        function hidePickerAndDraw() {
+            document.getElementById('pickerArea').style.display = 'none';
+            document.getElementById('drawArea').style.display = 'none';
+        }
+
+        // History, leaderboard, stats loaders
         function loadHistory() { socket.emit('request_history', {user_id: userId}); }
         socket.on('history_data', (data) => {
             let html = '';
@@ -501,25 +540,29 @@ HTML = r'''<!DOCTYPE html>
             const freq = data.freq;
             let html = '';
             for (let decade = 1; decade <= 80; decade += 10) {
-                // Row of numbers
-                let numRow = '', countRow = '';
+                let nums = '', counts = '';
                 for (let i = decade; i < decade+10; i++) {
-                    numRow += `<div class="stats-cell">${i}</div>`;
-                    countRow += `<div class="stats-cell"><span class="freq">${freq[i-1]}</span></div>`;
+                    nums += `<div class="stats-cell">${i}</div>`;
+                    counts += `<div class="stats-cell"><span class="freq">${freq[i-1]}</span></div>`;
                 }
-                html += numRow + countRow;
+                html += nums + counts;
             }
             document.getElementById('statsContainer').innerHTML = html;
         });
 
-        // Draw overlay
-        function showDrawOverlay(drawn, winners) {
+        // Draw area management
+        function showDrawArea(drawn, winners) {
+            drawInProgress = true;
             currentDrawn = drawn;
             currentWin = winners[userId] || 0;
-            document.getElementById('gameScreen').style.display = 'none';
-            document.getElementById('drawOverlay').style.display = 'block';
+
+            // Hide picker, show draw
+            document.getElementById('pickerArea').style.display = 'none';
+            document.getElementById('drawArea').style.display = 'block';
+            // Ensure we are on GAME tab
+            switchTab('game'); // will set active tab and show draw area
+
             document.getElementById('drawRoundId').innerText = `ID: ${roundId}`;
-            updateBalanceDisplay();
             const container = document.getElementById('drawGridContainer');
             container.innerHTML = '';
             const row1 = document.createElement('div'); row1.className = 'draw-row';
@@ -529,9 +572,11 @@ HTML = r'''<!DOCTYPE html>
             const row3 = document.createElement('div'); row3.className = 'draw-row draw-extra-row';
             for (let i=18; i<20; i++) { const d = document.createElement('div'); d.className = 'draw-num'; d.id = 'dn'+i; row3.appendChild(d); }
             container.appendChild(row1); container.appendChild(row2); container.appendChild(row3);
+
             document.getElementById('drawProgress').innerText = '0/20';
             document.getElementById('showResultBtn').style.display = 'none';
             document.getElementById('backToGameBtn').style.display = 'none';
+
             let index = 0;
             function reveal() {
                 if (index < 20) {
@@ -547,18 +592,33 @@ HTML = r'''<!DOCTYPE html>
             reveal();
         }
 
+        function hideDrawArea() {
+            drawInProgress = false;
+            document.getElementById('drawArea').style.display = 'none';
+            document.getElementById('pickerArea').style.display = 'block';
+            // Also hide result buttons
+            document.getElementById('showResultBtn').style.display = 'none';
+            document.getElementById('backToGameBtn').style.display = 'none';
+        }
+
         function showFinalResult() {
             document.getElementById('showResultBtn').style.display = 'none';
             document.getElementById('backToGameBtn').style.display = 'block';
-            if (myTickets.length > 0) alert(`You won ${currentWin.toFixed(2)} ETB!`);
-            else alert('You did not place any tickets.');
+            if (myTickets.length > 0) {
+                alert(`You won ${currentWin.toFixed(2)} ETB!`);
+            } else {
+                alert('You did not place any tickets.');
+            }
             balance += currentWin;
             updateBalanceDisplay();
         }
 
         function backToGame() {
-            document.getElementById('drawOverlay').style.display = 'none';
-            document.getElementById('gameScreen').style.display = 'block';
+            // This will just hide the draw area and show picker, but the round is still over.
+            // The new_round event will soon reset everything, but we can manually hide.
+            hideDrawArea();
+            // Switch to GAME tab
+            switchTab('game');
         }
 
         function deposit() {
@@ -566,9 +626,13 @@ HTML = r'''<!DOCTYPE html>
             if (amt && amt>0) socket.emit('deposit', {user_id: userId, amount: amt});
         }
 
+        // Initial setup
         updateBetDisplay();
         renderGrid();
         document.getElementById('roundId').innerText = `ID: ${roundId}`;
+        // Start with picker visible
+        document.getElementById('pickerArea').style.display = 'block';
+        document.getElementById('drawArea').style.display = 'none';
     </script>
 </body>
 </html>'''
